@@ -1,0 +1,646 @@
+/* hyoumoji - Content Stylesheet with Google Noto Emoji, GIFs & Animated Stickers */
+
+/* Import Google's Official Noto Color Emoji font (Android & Google Pixel style) */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap');
+
+/* --- Trigger Button in YouTube Comment Box --- */
+.hyoumoji-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: linear-gradient(135deg, #ff3366 0%, #9933ff 100%);
+  color: #ffffff !important;
+  border: none;
+  border-radius: 18px;
+  padding: 6px 14px 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: "Roboto", "YouTube Sans", Arial, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(153, 51, 255, 0.25);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-right: 8px;
+  user-select: none;
+  vertical-align: middle;
+  outline: none;
+  z-index: 10;
+}
+
+.hyoumoji-trigger-btn:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 4px 14px rgba(153, 51, 255, 0.45);
+  filter: brightness(1.08);
+}
+
+.hyoumoji-trigger-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.hyoumoji-btn-sticker-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: inline-block;
+  object-fit: contain;
+  background: #ffffff;
+  padding: 1px;
+}
+
+/* --- Hidden Payload in Active Comment Box (Never visible to user) --- */
+.hyoumoji-hidden-payload {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  font-size: 0px !important;
+  line-height: 0 !important;
+  pointer-events: none !important;
+}
+
+/* --- Live Draft Preview in Active Comment Box --- */
+.hyoumoji-draft-preview-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 51, 102, 0.3);
+  border-radius: 12px;
+  padding: 6px 12px;
+  margin: 8px 0;
+  width: fit-content;
+  max-width: 100%;
+  animation: hyoumoji-pop-in 0.2s ease forwards;
+}
+
+.hyoumoji-draft-preview-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.hyoumoji-draft-preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hyoumoji-draft-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #ff3366;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hyoumoji-draft-title {
+  font-size: 12px;
+  color: #ffffff;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hyoumoji-draft-remove-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #ddd;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s ease;
+  margin-left: 6px;
+}
+.hyoumoji-draft-remove-btn:hover {
+  background: #ff3366;
+  color: #fff;
+}
+
+/* --- Floating Modal Picker --- */
+#hyoumoji-picker-container {
+  position: absolute;
+  z-index: 9999999;
+  width: 390px;
+  max-width: 94vw;
+  height: 490px;
+  background: rgba(20, 20, 24, 0.96);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: "Roboto", "YouTube Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #f1f1f1;
+  animation: hyoumoji-pop-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Light mode support */
+html:not([dark]) #hyoumoji-picker-container {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  color: #1a1a1a;
+}
+
+@keyframes hyoumoji-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Header */
+.hyoumoji-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+html:not([dark]) .hyoumoji-header {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.hyoumoji-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ff3366, #b84dff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hyoumoji-header-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: inline-block;
+  object-fit: contain;
+  background: #fff;
+  padding: 1px;
+}
+
+.hyoumoji-close-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.hyoumoji-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+html:not([dark]) .hyoumoji-close-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #111;
+}
+
+/* Five Compact Tabs (Recent, Favorites, Emojis, GIFs, Stickers) */
+.hyoumoji-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+html:not([dark]) .hyoumoji-tabs {
+  background: rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.hyoumoji-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 6px 4px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a0a0b0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+html:not([dark]) .hyoumoji-tab-btn {
+  color: #666;
+}
+
+.hyoumoji-tab-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+html:not([dark]) .hyoumoji-tab-btn:hover {
+  color: #000;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.hyoumoji-tab-btn.active {
+  background: linear-gradient(135deg, rgba(255, 51, 102, 0.3), rgba(153, 51, 255, 0.3));
+  color: #ffffff;
+  border: 1px solid rgba(255, 51, 102, 0.45);
+}
+html:not([dark]) .hyoumoji-tab-btn.active {
+  background: linear-gradient(135deg, rgba(255, 51, 102, 0.15), rgba(153, 51, 255, 0.15));
+  color: #b8144b;
+  border: 1px solid rgba(255, 51, 102, 0.3);
+}
+
+/* Search Box */
+.hyoumoji-search-container {
+  padding: 8px 12px;
+}
+.hyoumoji-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+html:not([dark]) .hyoumoji-search-input {
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: #111;
+}
+.hyoumoji-search-input:focus {
+  border-color: #b84dff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 2px rgba(184, 77, 255, 0.25);
+}
+
+/* Category Filter Chips */
+.hyoumoji-chips-row {
+  display: flex;
+  gap: 6px;
+  padding: 2px 12px 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+.hyoumoji-chips-row::-webkit-scrollbar {
+  display: none;
+}
+
+.hyoumoji-chip {
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #bbb;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+html:not([dark]) .hyoumoji-chip {
+  background: rgba(0, 0, 0, 0.05);
+  color: #555;
+}
+.hyoumoji-chip:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+.hyoumoji-chip.active {
+  background: #ff3366;
+  color: #fff;
+}
+
+/* Content Area */
+.hyoumoji-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 12px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+html:not([dark]) .hyoumoji-body {
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+/* Section Header in Recent & Favorites */
+.hyoumoji-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #888899;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 10px 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hyoumoji-section-title:first-child {
+  margin-top: 2px;
+}
+
+/* Emojis Grid (Styled with Google Noto Color Emoji) */
+.hyoumoji-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+}
+
+.hyoumoji-emoji-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Android Emoji", sans-serif !important;
+  padding: 5px 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.1s ease;
+  user-select: none;
+}
+.hyoumoji-emoji-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: scale(1.22);
+}
+html:not([dark]) .hyoumoji-emoji-item:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* GIFs & Stickers Grid */
+.hyoumoji-media-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.hyoumoji-media-item {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  aspect-ratio: 16 / 11;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hyoumoji-media-item:hover {
+  transform: scale(1.03);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  z-index: 2;
+}
+
+.hyoumoji-media-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.hyoumoji-sticker-item {
+  aspect-ratio: 1 / 1;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 8px;
+}
+.hyoumoji-sticker-item img {
+  object-fit: contain;
+}
+
+/* Star/Favorite button on media items inside picker */
+.hyoumoji-fav-star-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  border-radius: 50%;
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s ease;
+  z-index: 5;
+}
+.hyoumoji-media-item:hover .hyoumoji-fav-star-btn {
+  opacity: 1;
+}
+.hyoumoji-fav-star-btn.is-fav {
+  opacity: 1;
+  color: #ffcc00;
+  background: rgba(0, 0, 0, 0.85);
+  text-shadow: 0 0 6px rgba(255, 204, 0, 0.8);
+}
+.hyoumoji-fav-star-btn:hover {
+  transform: scale(1.2);
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.hyoumoji-media-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+  color: #fff;
+  font-size: 10px;
+  padding: 12px 6px 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hyoumoji-media-item:hover .hyoumoji-media-label {
+  opacity: 1;
+}
+
+/* Loading & Empty States */
+.hyoumoji-status-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 220px;
+  color: #888899;
+  font-size: 13px;
+  gap: 10px;
+  text-align: center;
+  padding: 0 20px;
+}
+.hyoumoji-status-box p {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #aaaabb;
+}
+.hyoumoji-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #ff3366;
+  border-radius: 50%;
+  animation: hyoumoji-spin 0.8s linear infinite;
+}
+@keyframes hyoumoji-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Footer / Notice */
+.hyoumoji-footer-tip {
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+  color: #777;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+html:not([dark]) .hyoumoji-footer-tip {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  color: #888;
+}
+
+/* --- Inline Rendered Media in YouTube Comment Feed --- */
+.hyoumoji-comment-badge {
+  display: inline-block;
+  margin-top: 8px;
+  margin-bottom: 4px;
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  max-width: 290px;
+  max-height: 220px;
+  background: #000;
+  vertical-align: top;
+}
+
+.hyoumoji-comment-badge img {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 11px;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.hyoumoji-comment-badge:hover img {
+  transform: scale(1.02);
+}
+
+.hyoumoji-tag-pill {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+}
+
+/* "⭐ Save to Favs" Button on comments */
+.hyoumoji-save-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  z-index: 5;
+}
+.hyoumoji-save-btn:hover {
+  background: #ffcc00;
+  color: #000;
+  border-color: #ffcc00;
+  transform: scale(1.05);
+}
+.hyoumoji-save-btn.is-saved {
+  background: #ffcc00;
+  color: #000;
+  border-color: #ffcc00;
+}
+
+/* Toast Notifications */
+.hyoumoji-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: rgba(18, 18, 22, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid #ff3366;
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 24px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  z-index: 10000000;
+  opacity: 0;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hyoumoji-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
