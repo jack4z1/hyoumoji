@@ -480,24 +480,28 @@
   // --- Render Tabs Content ---
   function renderTabContent() {
     if (!pickerModal) return;
-    currentOffset = 0;
-    hasMoreMedia = true;
+    try {
+      currentOffset = 0;
+      hasMoreMedia = true;
 
-    const container = pickerModal.querySelector('#hyoumoji-tab-content');
-    const chipsContainer = pickerModal.querySelector('#hyoumoji-chips-container');
-    chipsContainer.innerHTML = '';
-    container.innerHTML = '';
+      const container = pickerModal.querySelector('#hyoumoji-tab-content');
+      const chipsContainer = pickerModal.querySelector('#hyoumoji-chips-container');
+      if (chipsContainer) chipsContainer.innerHTML = '';
+      if (container) container.innerHTML = '';
 
-    if (activeTab === 'recent') {
-      renderRecentTab(container);
-    } else if (activeTab === 'favorites') {
-      renderFavoritesTab(container);
-    } else if (activeTab === 'emojis') {
-      renderEmojisTab(container, chipsContainer);
-    } else if (activeTab === 'gifs') {
-      renderMediaTab(container, chipsContainer, false);
-    } else if (activeTab === 'stickers') {
-      renderMediaTab(container, chipsContainer, true);
+      if (activeTab === 'recent') {
+        renderRecentTab(container);
+      } else if (activeTab === 'favorites') {
+        renderFavoritesTab(container);
+      } else if (activeTab === 'emojis') {
+        renderEmojisTab(container, chipsContainer);
+      } else if (activeTab === 'gifs') {
+        renderMediaTab(container, chipsContainer, false);
+      } else if (activeTab === 'stickers') {
+        renderMediaTab(container, chipsContainer, true);
+      }
+    } catch (err) {
+      console.warn('[hyoumoji] Tab render notice:', err);
     }
   }
 
