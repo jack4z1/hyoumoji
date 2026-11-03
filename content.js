@@ -32,39 +32,77 @@
     linkProtection: true // Warn before inserting GIF links into comments
   };
 
+  // Helper to ensure extension context hasn't been invalidated during live reload
+  function isContextValid() {
+    try {
+      return Boolean(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
+    } catch {
+      return false;
+    }
+  }
+
+  function getSafeExtensionUrl(path) {
+    try {
+      if (isContextValid() && chrome.runtime?.getURL) {
+        return chrome.runtime.getURL(path);
+      }
+    } catch {}
+    return '';
+  }
+
+  function safeDecode(str) {
+    try {
+      return decodeURIComponent(str || '');
+    } catch {
+      return str || '';
+    }
+  }
+
   // --- Initialize Storage ---
   function loadUserStorage(callback) {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['hyoumoji_recents', 'hyoumoji_favorites', 'hyoumoji_link_protection'], (data) => {
-        if (data.hyoumoji_recents) userStorage.recents = data.hyoumoji_recents;
-        if (data.hyoumoji_favorites) userStorage.favorites = data.hyoumoji_favorites;
-        if (typeof data.hyoumoji_link_protection === 'boolean') {
-          userStorage.linkProtection = data.hyoumoji_link_protection;
-        }
-        if (callback) callback();
-      });
-    } else {
-      if (callback) callback();
-    }
+    try {
+      if (isContextValid() && chrome.storage?.local) {
+        chrome.storage.local.get(['hyoumoji_recents', 'hyoumoji_favorites', 'hyoumoji_link_protection'], (data) => {
+          if (chrome.runtime?.lastError) {
+            if (callback) callback();
+            return;
+          }
+          if (data?.hyoumoji_recents) userStorage.recents = data.hyoumoji_recents;
+          if (data?.hyoumoji_favorites) userStorage.favorites = data.hyoumoji_favorites;
+          if (typeof data?.hyoumoji_link_protection === 'boolean') {
+            userStorage.linkProtection = data.hyoumoji_link_protection;
+          }
+          if (callback) callback();
+        });
+        return;
+      }
+    } catch {}
+    if (callback) callback();
   }
 
   function saveRecents() {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ hyoumoji_recents: userStorage.recents });
-    }
+    try {
+      if (isContextValid() && chrome.storage?.local) {
+        chrome.storage.local.set({ hyoumoji_recents: userStorage.recents });
+      }
+    } catch {}
   }
 
   function saveFavorites() {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ hyoumoji_favorites: userStorage.favorites });
-    }
+    try {
+      if (isContextValid() && chrome.storage?.local) {
+        chrome.storage.local.set({ hyoumoji_favorites: userStorage.favorites });
+      }
+    } catch {}
   }
 
   function saveLinkProtection(value) {
     userStorage.linkProtection = value;
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ hyoumoji_link_protection: value });
-    }
+    try {
+      if (isContextValid() && chrome.storage?.local) {
+        chrome.storage.local.set({ hyoumoji_link_protection: value });
+      }
+    } catch {}
   }
 
   // URL Sanitizer to prevent malicious or non-HTTPS URLs
@@ -308,7 +346,7 @@
     modal.id = 'hyoumoji-picker-container';
     modal.style.display = 'none';
 
-    const iconUrl = typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon48.png') : '';
+    const iconUrl = getSafeExtensionUrl('icons/icon48.png');
 
     modal.innerHTML = `
       <div class="hyoumoji-header">
@@ -799,27 +837,32 @@
   // --- Secure Background Fetch Helper (Manifest V3 CORS Proxy) ---
   function fetchMediaViaBackground(endpoint) {
     return new Promise((resolve, reject) => {
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({ action: 'fetch_media', endpoint }, (response) => {
-          if (chrome.runtime.lastError) {
-            return reject(new Error(chrome.runtime.lastError.message));
-          }
-          if (response && response.success) {
-            resolve(response.data);
-          } else {
-            reject(new Error(response?.error || 'Failed to fetch media'));
-          }
-        });
-      } else {
-        // Fallback for offline test environments
-        fetch(endpoint)
-          .then(res => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.json();
-          })
-          .then(resolve)
-          .catch(reject);
+      try {
+        if (isContextValid() && chrome.runtime?.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'fetch_media', endpoint }, (response) => {
+            if (chrome.runtime?.lastError) {
+              return reject(new Error(chrome.runtime.lastError.message));
+            }
+            if (response && response.success) {
+              resolve(response.data);
+            } else {
+              reject(new Error(response?.error || 'Failed to fetch media'));
+            }
+          });
+          return;
+        }
+      } catch (err) {
+        return reject(err);
       }
+
+      // Fallback for offline test environments
+      fetch(endpoint)
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .then(resolve)
+        .catch(reject);
     });
   }
 
@@ -938,7 +981,7 @@
     btn.className = 'hyoumoji-trigger-btn';
     btn.title = 'Add Emojis, GIFs & Stickers (hyoumoji)';
 
-    const iconUrl = typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL('icons/icon48.png') : '';
+    const iconUrl = getSafeExtensionUrl('icons/icon48.png');
     btn.innerHTML = `
       ${iconUrl ? `<img src="${iconUrl}" class="hyoumoji-btn-sticker-icon" alt="hyoumoji" />` : ''}
       <span>hyoumoji</span>
@@ -979,7 +1022,7 @@
         // 1. Hide all links pointing to media or showing media URL
         const linkTags = node.querySelectorAll('a');
         linkTags.forEach(a => {
-          const href = decodeURIComponent(a.href || '').toLowerCase();
+          const href = safeDecode(a.href).toLowerCase();
           const aText = (a.textContent || '').toLowerCase();
           if (
             href.includes('giphy.com') ||
@@ -1078,6 +1121,10 @@
 
   let scanDebounceTimer = null;
   function scheduleScan() {
+    if (!isContextValid()) {
+      try { observer.disconnect(); } catch {}
+      return;
+    }
     if (scanDebounceTimer) return;
     scanDebounceTimer = setTimeout(() => {
       scanDebounceTimer = null;
