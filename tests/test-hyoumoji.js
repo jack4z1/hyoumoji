@@ -48,7 +48,8 @@ async function runAllTests() {
                      allowedHosts.every(h => manifest.host_permissions.includes(h));
   assert(hostsMatch, 'Host permissions limited strictly to YouTube, GIPHY and Tenor CDNs');
 
-  // Verify icons exist
+  // Verify background service worker and icons exist
+  assert(fs.existsSync(path.join(ROOT_DIR, manifest.background.service_worker)), 'Background Service Worker exists');
   assert(fs.existsSync(path.join(ROOT_DIR, manifest.icons['16'])), 'Icon 16px exists');
   assert(fs.existsSync(path.join(ROOT_DIR, manifest.icons['48'])), 'Icon 48px exists');
   assert(fs.existsSync(path.join(ROOT_DIR, manifest.icons['128'])), 'Icon 128px exists');
@@ -59,6 +60,7 @@ async function runAllTests() {
   console.log('\n--- TEST 2: Data Leak & Personal Information Audit ---');
   const contentJs = fs.readFileSync(path.join(ROOT_DIR, 'content.js'), 'utf8');
   const popupJs = fs.readFileSync(path.join(ROOT_DIR, 'popup.js'), 'utf8');
+  const backgroundJs = fs.readFileSync(path.join(ROOT_DIR, 'background.js'), 'utf8');
 
   // Check for telemetry, cookies, or user tracking
   const leakKeywords = [
@@ -68,7 +70,7 @@ async function runAllTests() {
   ];
   let foundLeak = false;
   leakKeywords.forEach(kw => {
-    if (contentJs.includes(kw) || popupJs.includes(kw)) {
+    if (contentJs.includes(kw) || popupJs.includes(kw) || backgroundJs.includes(kw)) {
       foundLeak = true;
       console.error(`Found suspicious keyword: ${kw}`);
     }
@@ -76,7 +78,7 @@ async function runAllTests() {
   assert(!foundLeak, 'Zero tracking, analytics, or identity extraction detected');
 
   // Check that dangerous execution functions are not used
-  assert(!contentJs.includes('eval(') && !contentJs.includes('new Function'), 'No dangerous eval() or Function() found');
+  assert(!contentJs.includes('eval(') && !backgroundJs.includes('eval(') && !contentJs.includes('new Function'), 'No dangerous eval() or Function() found');
 
   // ----------------------------------------------------
   // TEST 3: URL Sanitizer & XSS Prevention

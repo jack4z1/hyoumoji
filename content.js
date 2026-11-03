@@ -6,7 +6,12 @@
 (function () {
   'use strict';
 
-  // --- API Configuration (G-Rated, SafeSearch Enforced) ---
+  // Only execute in the top-level main window (never inside player, ads, or shorts subframes)
+  if (window !== window.top) {
+    return;
+  }
+
+  // --- API Configuration (PG-Rated SafeSearch Enforced) ---
   const API_KEY = 'sXpGFDGZs0Dv1mmNFvYaGUvYwKX0PWIh';
   const GIPHY_BASE = 'https://api.giphy.com/v1';
 
@@ -791,6 +796,33 @@
     return card;
   }
 
+  // --- Secure Background Fetch Helper (Manifest V3 CORS Proxy) ---
+  function fetchMediaViaBackground(endpoint) {
+    return new Promise((resolve, reject) => {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action: 'fetch_media', endpoint }, (response) => {
+          if (chrome.runtime.lastError) {
+            return reject(new Error(chrome.runtime.lastError.message));
+          }
+          if (response && response.success) {
+            resolve(response.data);
+          } else {
+            reject(new Error(response?.error || 'Failed to fetch media'));
+          }
+        });
+      } else {
+        // Fallback for offline test environments
+        fetch(endpoint)
+          .then(res => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .then(resolve)
+          .catch(reject);
+      }
+    });
+  }
+
   // --- Live SafeSearch Media Fetcher with Pagination & Fast Loading ---
   async function fetchLiveMedia(query, isSticker, gridElement, isAppend = false) {
     if (isFetchingMedia) return;
@@ -809,9 +841,7 @@
         endpoint = `${GIPHY_BASE}/${typeEndpoint}/search?api_key=${API_KEY}&q=${encodeURIComponent(cleanQuery)}&limit=${limit}&offset=${currentOffset}&rating=${rating}`;
       }
 
-      const res = await fetch(endpoint);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const data = await fetchMediaViaBackground(endpoint);
 
       if (!isAppend) {
         gridElement.innerHTML = '';
