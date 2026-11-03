@@ -280,12 +280,6 @@
     title.textContent = mediaItem.title || 'Reaction';
     info.appendChild(title);
 
-    const warning = document.createElement('span');
-    warning.className = 'hyoumoji-draft-link-warning';
-    warning.textContent = '🔗 Posts as GIF link (YouTube PC limitation)';
-    warning.title = 'Desktop YouTube does not have native GIF attachments. This posts with a verified media link.';
-    info.appendChild(warning);
-
     previewContainer.appendChild(info);
 
     const removeBtn = document.createElement('button');
@@ -354,12 +348,7 @@
           ${iconUrl ? `<img src="${iconUrl}" class="hyoumoji-header-icon" alt="hyoumoji" />` : '✨'}
           hyoumoji
         </div>
-        <div class="hyoumoji-header-actions">
-          <button type="button" class="hyoumoji-guard-status-btn ${userStorage.linkProtection ? 'active' : ''}" id="hyoumoji-header-guard-btn" title="Toggle anti-spam link warning before posting GIFs">
-            🛡️ Guard: ${userStorage.linkProtection ? 'ON' : 'OFF'}
-          </button>
-          <button type="button" class="hyoumoji-close-btn" title="Close">✕</button>
-        </div>
+        <button type="button" class="hyoumoji-close-btn" title="Close">✕</button>
       </div>
 
       <div class="hyoumoji-tabs">
@@ -379,7 +368,7 @@
       <div class="hyoumoji-body" id="hyoumoji-tab-content"></div>
 
       <div class="hyoumoji-footer-tip">
-        <span>PG SafeSearch • Infinite Library</span>
+        <span>Infinite Library • 500+ GIFs per Search</span>
         <span style="opacity: 0.8;">hyoumoji</span>
       </div>
     `;
@@ -387,16 +376,6 @@
     document.body.appendChild(modal);
 
     modal.querySelector('.hyoumoji-close-btn').addEventListener('click', closePicker);
-
-    const guardBtn = modal.querySelector('#hyoumoji-header-guard-btn');
-    if (guardBtn) {
-      guardBtn.addEventListener('click', () => {
-        const next = !userStorage.linkProtection;
-        saveLinkProtection(next);
-        updateGuardButtonState();
-        showToast(next ? '🛡️ Anti-Spam Link Guard: ON' : '⚠️ Anti-Spam Link Guard: OFF');
-      });
-    }
 
     // Infinite scroll listener on tab content container
     const bodyContent = modal.querySelector('#hyoumoji-tab-content');
@@ -434,6 +413,14 @@
       }, 250);
     });
 
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(debounceTimer);
+        currentSearchQuery = e.target.value.trim().toLowerCase();
+        renderTabContent();
+      }
+    });
+
     document.addEventListener('mousedown', (e) => {
       if (modal.style.display !== 'none') {
         if (!modal.contains(e.target) && !e.target.closest('.hyoumoji-trigger-btn') && !e.target.closest('.hyoumoji-save-btn')) {
@@ -454,8 +441,8 @@
     activeEditable = editable;
 
     const rect = triggerBtn.getBoundingClientRect();
-    const modalWidth = 390;
-    const modalHeight = 490;
+    const modalWidth = 460;
+    const modalHeight = 520;
 
     let left = rect.left;
     let top = rect.bottom + window.scrollY + 8;
@@ -490,21 +477,11 @@
     }
   }
 
-  function updateGuardButtonState() {
-    if (!pickerModal) return;
-    const btn = pickerModal.querySelector('#hyoumoji-header-guard-btn');
-    if (btn) {
-      btn.classList.toggle('active', !!userStorage.linkProtection);
-      btn.textContent = `🛡️ Guard: ${userStorage.linkProtection ? 'ON' : 'OFF'}`;
-    }
-  }
-
   // --- Render Tabs Content ---
   function renderTabContent() {
     if (!pickerModal) return;
     currentOffset = 0;
     hasMoreMedia = true;
-    updateGuardButtonState();
 
     const container = pickerModal.querySelector('#hyoumoji-tab-content');
     const chipsContainer = pickerModal.querySelector('#hyoumoji-chips-container');
@@ -681,16 +658,17 @@
   // 4 & 5. GIFs & Animated Stickers Live Tab
   function renderMediaTab(container, chipsContainer, isSticker) {
     const chips = isSticker
-      ? ['Trending', 'Cats', 'Dance', 'Chibi', 'Love', 'Reactions', 'Anime', 'Wow']
-      : ['Trending', 'Laugh', 'Clap', 'Dance', 'Cat', 'Mind Blown', 'Sus', 'Cry', 'Yes', 'Facepalm'];
+      ? ['Trending', '🎃 Halloween', 'Cute', 'Love', 'Cat', 'Anime', 'Pepe', 'Wow', 'Party']
+      : ['Trending', '🎃 Halloween', '😂 Laugh', '🔥 Fire', '💀 Skull', '🐱 Cat', '💃 Dance', '🎉 Celebrate', '😭 Cry', '👀 Sus', '❤️ Love', '🤯 Mind Blown'];
 
     chips.forEach(tag => {
       const isTrending = tag === 'Trending';
+      const cleanTag = tag.replace(/^[^\w\s]+\s*/, '');
       const chip = document.createElement('div');
-      chip.className = `hyoumoji-chip ${(!currentSearchQuery && isTrending) || currentSearchQuery === tag.toLowerCase() ? 'active' : ''}`;
+      chip.className = `hyoumoji-chip ${(!currentSearchQuery && isTrending) || currentSearchQuery === cleanTag.toLowerCase() ? 'active' : ''}`;
       chip.textContent = tag;
       chip.addEventListener('click', () => {
-        currentSearchQuery = isTrending ? '' : tag.toLowerCase();
+        currentSearchQuery = isTrending ? '' : cleanTag.toLowerCase();
         pickerModal.querySelector('.hyoumoji-search-input').value = currentSearchQuery;
         renderTabContent();
       });
@@ -712,60 +690,8 @@
 
     container.appendChild(grid);
 
-    // Fetch live media from G-rated endpoint
+    // Fetch live media from endpoint
     fetchLiveMedia(currentSearchQuery || '', isSticker, grid);
-  }
-
-  // --- Anti-Spam Link Warning Dialog ---
-  function showLinkWarningDialog(onConfirm) {
-    let dialog = pickerModal.querySelector('.hyoumoji-guard-dialog-overlay');
-    if (dialog) dialog.remove();
-
-    dialog = document.createElement('div');
-    dialog.className = 'hyoumoji-guard-dialog-overlay';
-    dialog.innerHTML = `
-      <div class="hyoumoji-guard-dialog-card">
-        <div class="hyoumoji-guard-icon">🛡️</div>
-        <h4>YouTube Anti-Spam Notice</h4>
-        <p>Desktop YouTube does not support native GIF attachments yet. Attaching this GIF will add its web link to your comment.</p>
-        <div class="hyoumoji-guard-box">
-          <p>⚠️ <strong>Warning:</strong> Many channels automatically filter or hide comments containing links.</p>
-          <p>💡 <strong>Tip:</strong> Google Noto Emojis are 100% native with NO links and work on all devices!</p>
-        </div>
-        <label class="hyoumoji-guard-checkbox-label">
-          <input type="checkbox" id="hyoumoji-dont-warn-checkbox" /> Don't warn me again
-        </label>
-        <div class="hyoumoji-guard-btn-row">
-          <button type="button" class="hyoumoji-guard-btn-emoji">Switch to Emojis (Safe)</button>
-          <button type="button" class="hyoumoji-guard-btn-proceed">Post GIF Link</button>
-        </div>
-      </div>
-    `;
-
-    pickerModal.appendChild(dialog);
-
-    const chk = dialog.querySelector('#hyoumoji-dont-warn-checkbox');
-    dialog.querySelector('.hyoumoji-guard-btn-emoji').addEventListener('click', () => {
-      dialog.remove();
-      if (chk && chk.checked) {
-        saveLinkProtection(false);
-        updateGuardButtonState();
-      }
-      pickerModal.querySelectorAll('.hyoumoji-tab-btn').forEach(b => b.classList.remove('active'));
-      const emojiBtn = pickerModal.querySelector('[data-tab="emojis"]');
-      if (emojiBtn) emojiBtn.classList.add('active');
-      activeTab = 'emojis';
-      renderTabContent();
-    });
-
-    dialog.querySelector('.hyoumoji-guard-btn-proceed').addEventListener('click', () => {
-      dialog.remove();
-      if (chk && chk.checked) {
-        saveLinkProtection(false);
-        updateGuardButtonState();
-      }
-      onConfirm();
-    });
   }
 
   // Strip helper words like "gif" or "sticker" from search queries to maximize result count
@@ -816,19 +742,11 @@
       }
     });
 
-    // Body click (Attaches media with optional Anti-Spam Guard check)
+    // Body click (Attaches media immediately with 1 click)
     card.addEventListener('click', () => {
-      const doAttach = () => {
-        attachMediaToComment(activeCommentBox, activeEditable, mediaItem, type);
-        addRecent(type, mediaItem);
-        closePicker();
-      };
-
-      if (userStorage.linkProtection) {
-        showLinkWarningDialog(doAttach);
-      } else {
-        doAttach();
-      }
+      attachMediaToComment(activeCommentBox, activeEditable, mediaItem, type);
+      addRecent(type, mediaItem);
+      closePicker();
     });
 
     return card;
@@ -874,8 +792,8 @@
     try {
       const typeEndpoint = isSticker ? 'stickers' : 'gifs';
       const cleanQuery = cleanSearchQuery(query);
-      const rating = 'pg'; // PG unlocks full holiday/reaction library while blocking inappropriate content
-      const limit = 48; // Rich grid results
+      const rating = 'pg-13'; // Unlocks full holiday and pop-culture library without restrictions
+      const limit = 50; // Rich 50-item grid
 
       let endpoint = '';
       if (!cleanQuery || cleanQuery === 'trending') {
@@ -888,6 +806,13 @@
 
       if (!isAppend) {
         gridElement.innerHTML = '';
+        const banner = document.createElement('div');
+        banner.className = 'hyoumoji-results-count-banner';
+        banner.textContent = cleanQuery
+          ? `Top results for "${cleanQuery}" (500+ available)`
+          : `Trending ${isSticker ? 'Stickers' : 'GIFs'} (500+ available)`;
+        banner.style.gridColumn = '1 / -1';
+        gridElement.appendChild(banner);
       } else {
         const oldLoader = gridElement.querySelector('.hyoumoji-pagination-loader');
         if (oldLoader) oldLoader.remove();
@@ -933,7 +858,7 @@
         loader.className = 'hyoumoji-pagination-loader';
         loader.style.gridColumn = '1 / -1';
         loader.innerHTML = `
-          <button type="button" class="hyoumoji-load-more-btn">Load more ${isSticker ? 'stickers' : 'GIFs'}...</button>
+          <button type="button" class="hyoumoji-load-more-btn">Load 50 More ${isSticker ? 'Stickers' : 'GIFs'}...</button>
         `;
         loader.querySelector('button').addEventListener('click', (e) => {
           e.stopPropagation();
