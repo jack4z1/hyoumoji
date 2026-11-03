@@ -110,6 +110,15 @@
   text-overflow: ellipsis;
 }
 
+.hyoumoji-draft-link-warning {
+  font-size: 10px;
+  color: #ffaa33;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
 .hyoumoji-draft-remove-btn {
   background: rgba(255, 255, 255, 0.1);
   border: none;
@@ -201,6 +210,32 @@ html:not([dark]) .hyoumoji-header {
   object-fit: contain;
   background: #fff;
   padding: 1px;
+}
+
+.hyoumoji-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hyoumoji-guard-status-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  color: #888;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.hyoumoji-guard-status-btn.active {
+  background: rgba(0, 210, 106, 0.15);
+  border-color: rgba(0, 210, 106, 0.35);
+  color: #00e676;
+}
+.hyoumoji-guard-status-btn:hover {
+  filter: brightness(1.15);
 }
 
 .hyoumoji-close-btn {
@@ -538,6 +573,163 @@ html:not([dark]) .hyoumoji-emoji-item:hover {
 html:not([dark]) .hyoumoji-footer-tip {
   border-top: 1px solid rgba(0, 0, 0, 0.06);
   color: #888;
+}
+
+/* Anti-Spam Guard Warning Overlay */
+.hyoumoji-guard-dialog-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: hyoumoji-pop-in 0.18s ease;
+}
+
+.hyoumoji-guard-dialog-card {
+  background: #18181f;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  padding: 18px;
+  width: 100%;
+  max-width: 330px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: #eee;
+  text-align: center;
+}
+html:not([dark]) .hyoumoji-guard-dialog-card {
+  background: #ffffff;
+  color: #111;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.hyoumoji-guard-icon {
+  font-size: 32px;
+  margin-bottom: 2px;
+}
+
+.hyoumoji-guard-dialog-card h4 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffaa33;
+}
+
+.hyoumoji-guard-dialog-card p {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #ccc;
+  text-align: left;
+}
+html:not([dark]) .hyoumoji-guard-dialog-card p {
+  color: #444;
+}
+
+.hyoumoji-guard-box {
+  background: rgba(255, 170, 51, 0.1);
+  border: 1px solid rgba(255, 170, 51, 0.3);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  font-size: 11px;
+}
+
+.hyoumoji-guard-checkbox-label {
+  font-size: 11px;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.hyoumoji-guard-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.hyoumoji-guard-btn-emoji {
+  flex: 1;
+  background: linear-gradient(135deg, #00c853, #009624);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.hyoumoji-guard-btn-emoji:hover {
+  opacity: 0.9;
+}
+
+.hyoumoji-guard-btn-proceed {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ddd;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+html:not([dark]) .hyoumoji-guard-btn-proceed {
+  background: rgba(0, 0, 0, 0.05);
+  color: #333;
+  border-color: rgba(0, 0, 0, 0.15);
+}
+.hyoumoji-guard-btn-proceed:hover {
+  background: rgba(255, 51, 102, 0.2);
+  border-color: #ff3366;
+  color: #ff3366;
+}
+
+/* Pagination loader & Load More button */
+.hyoumoji-pagination-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.hyoumoji-load-more-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  color: #ddd;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+html:not([dark]) .hyoumoji-load-more-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #444;
+}
+.hyoumoji-load-more-btn:hover {
+  background: #ff3366;
+  border-color: #ff3366;
+  color: #fff;
+  transform: translateY(-1px);
 }
 
 /* --- Inline Rendered Media in YouTube Comment Feed --- */

@@ -16,19 +16,26 @@
   let pickerModal = null;
   let activeTab = 'emojis'; // 'recent', 'favorites', 'emojis', 'gifs', 'stickers'
   let currentSearchQuery = '';
+  let currentOffset = 0;
+  let isFetchingMedia = false;
+  let hasMoreMedia = true;
 
   // In-memory cache for storage
   let userStorage = {
     recents: { emojis: [], gifs: [], stickers: [] },
-    favorites: { gifs: [], stickers: [] }
+    favorites: { gifs: [], stickers: [] },
+    linkProtection: true // Warn before inserting GIF links into comments
   };
 
   // --- Initialize Storage ---
   function loadUserStorage(callback) {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['hyoumoji_recents', 'hyoumoji_favorites'], (data) => {
+      chrome.storage.local.get(['hyoumoji_recents', 'hyoumoji_favorites', 'hyoumoji_link_protection'], (data) => {
         if (data.hyoumoji_recents) userStorage.recents = data.hyoumoji_recents;
         if (data.hyoumoji_favorites) userStorage.favorites = data.hyoumoji_favorites;
+        if (typeof data.hyoumoji_link_protection === 'boolean') {
+          userStorage.linkProtection = data.hyoumoji_link_protection;
+        }
         if (callback) callback();
       });
     } else {
@@ -45,6 +52,13 @@
   function saveFavorites() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ hyoumoji_favorites: userStorage.favorites });
+    }
+  }
+
+  function saveLinkProtection(value) {
+    userStorage.linkProtection = value;
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ hyoumoji_link_protection: value });
     }
   }
 
@@ -223,6 +237,12 @@
     title.textContent = mediaItem.title || 'Reaction';
     info.appendChild(title);
 
+    const warning = document.createElement('span');
+    warning.className = 'hyoumoji-draft-link-warning';
+    warning.textContent = '🔗 Posts as GIF link (YouTube PC limitation)';
+    warning.title = 'Desktop YouTube does not have native GIF attachments. This posts with a verified media link.';
+    info.appendChild(warning);
+
     previewContainer.appendChild(info);
 
     const removeBtn = document.createElement('button');
@@ -291,7 +311,12 @@
           ${iconUrl ? `<img src="${iconUrl}" class="hyoumoji-header-icon" alt="hyoumoji" />` : '✨'}
           hyoumoji
         </div>
-        <button class="hyoumoji-close-btn" title="Close">✕</button>
+        <div class="hyoumoji-header-actions">
+          <button type="button" class="hyoumoji-guard-status-btn ${userStorage.linkProtection ? 'active' : ''}" id="hyoumoji-header-guard-btn" title="Toggle anti-spam link warning before posting GIFs">
+            🛡️ Guard: ${userStorage.linkProtection ? 'ON' : 'OFF'}
+          </button>
+          <button type="button" class="hyoumoji-close-btn" title="Close">✕</button>
+        </div>
       </div>
 
       <div class="hyoumoji-tabs">
@@ -311,7 +336,7 @@
       <div class="hyoumoji-body" id="hyoumoji-tab-content"></div>
 
       <div class="hyoumoji-footer-tip">
-        <span>G-Rated SafeSearch • Family Friendly</span>
+        <span>PG SafeSearch • Infinite Library</span>
         <span style="opacity: 0.8;">hyoumoji</span>
       </div>
     `;
@@ -319,6 +344,33 @@
     document.body.appendChild(modal);
 
     modal.querySelector('.hyoumoji-close-btn').addEventListener('click', closePicker);
+
+    const guardBtn = modal.querySelector('#hyoumoji-header-guard-btn');
+    if (guardBtn) {
+      guardBtn.addEventListener('click', () => {
+        const next = !userStorage.linkProtection;
+        saveLinkProtection(next);
+        updateGuardButtonState();
+        showToast(next ? '🛡️ Anti-Spam Link Guard: ON' : '⚠️ Anti-Spam Link Guard: OFF');
+      });
+    }
+
+    // Infinite scroll listener on tab content container
+    const bodyContent = modal.querySelector('#hyoumoji-tab-content');
+    if (bodyContent) {
+      bodyContent.addEventListener('scroll', () => {
+        if (activeTab === 'gifs' || activeTab === 'stickers') {
+          if (!isFetchingMedia && hasMoreMedia) {
+            if (bodyContent.scrollTop + bodyContent.clientHeight >= bodyContent.scrollHeight - 160) {
+              const grid = bodyContent.querySelector('.hyoumoji-media-grid');
+              if (grid) {
+                fetchLiveMedia(currentSearchQuery, activeTab === 'stickers', grid, true);
+              }
+            }
+          }
+        }
+      });
+    }
 
     modal.querySelectorAll('.hyoumoji-tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -395,9 +447,22 @@
     }
   }
 
+  function updateGuardButtonState() {
+    if (!pickerModal) return;
+    const btn = pickerModal.querySelector('#hyoumoji-header-guard-btn');
+    if (btn) {
+      btn.classList.toggle('active', !!userStorage.linkProtection);
+      btn.textContent = `🛡️ Guard: ${userStorage.linkProtection ? 'ON' : 'OFF'}`;
+    }
+  }
+
   // --- Render Tabs Content ---
   function renderTabContent() {
     if (!pickerModal) return;
+    currentOffset = 0;
+    hasMoreMedia = true;
+    updateGuardButtonState();
+
     const container = pickerModal.querySelector('#hyoumoji-tab-content');
     const chipsContainer = pickerModal.querySelector('#hyoumoji-chips-container');
     chipsContainer.innerHTML = '';
@@ -608,6 +673,64 @@
     fetchLiveMedia(currentSearchQuery || '', isSticker, grid);
   }
 
+  // --- Anti-Spam Link Warning Dialog ---
+  function showLinkWarningDialog(onConfirm) {
+    let dialog = pickerModal.querySelector('.hyoumoji-guard-dialog-overlay');
+    if (dialog) dialog.remove();
+
+    dialog = document.createElement('div');
+    dialog.className = 'hyoumoji-guard-dialog-overlay';
+    dialog.innerHTML = `
+      <div class="hyoumoji-guard-dialog-card">
+        <div class="hyoumoji-guard-icon">🛡️</div>
+        <h4>YouTube Anti-Spam Notice</h4>
+        <p>Desktop YouTube does not support native GIF attachments yet. Attaching this GIF will add its web link to your comment.</p>
+        <div class="hyoumoji-guard-box">
+          <p>⚠️ <strong>Warning:</strong> Many channels automatically filter or hide comments containing links.</p>
+          <p>💡 <strong>Tip:</strong> Google Noto Emojis are 100% native with NO links and work on all devices!</p>
+        </div>
+        <label class="hyoumoji-guard-checkbox-label">
+          <input type="checkbox" id="hyoumoji-dont-warn-checkbox" /> Don't warn me again
+        </label>
+        <div class="hyoumoji-guard-btn-row">
+          <button type="button" class="hyoumoji-guard-btn-emoji">Switch to Emojis (Safe)</button>
+          <button type="button" class="hyoumoji-guard-btn-proceed">Post GIF Link</button>
+        </div>
+      </div>
+    `;
+
+    pickerModal.appendChild(dialog);
+
+    const chk = dialog.querySelector('#hyoumoji-dont-warn-checkbox');
+    dialog.querySelector('.hyoumoji-guard-btn-emoji').addEventListener('click', () => {
+      dialog.remove();
+      if (chk && chk.checked) {
+        saveLinkProtection(false);
+        updateGuardButtonState();
+      }
+      pickerModal.querySelectorAll('.hyoumoji-tab-btn').forEach(b => b.classList.remove('active'));
+      const emojiBtn = pickerModal.querySelector('[data-tab="emojis"]');
+      if (emojiBtn) emojiBtn.classList.add('active');
+      activeTab = 'emojis';
+      renderTabContent();
+    });
+
+    dialog.querySelector('.hyoumoji-guard-btn-proceed').addEventListener('click', () => {
+      dialog.remove();
+      if (chk && chk.checked) {
+        saveLinkProtection(false);
+        updateGuardButtonState();
+      }
+      onConfirm();
+    });
+  }
+
+  // Strip helper words like "gif" or "sticker" from search queries to maximize result count
+  function cleanSearchQuery(q) {
+    if (!q || typeof q !== 'string') return '';
+    return q.replace(/\b(gifs?|stickers?|animated|animation)\b/gi, '').trim();
+  }
+
   // --- Helper to Create Media Card with Favorite Star ---
   function createMediaCard(mediaItem, type) {
     const card = document.createElement('div');
@@ -622,10 +745,12 @@
     const img = document.createElement('img');
     img.src = safePreview;
     img.loading = 'lazy';
+    img.decoding = 'async';
     img.alt = safeTitle;
     card.appendChild(img);
 
     const starBtn = document.createElement('button');
+    starBtn.type = 'button';
     starBtn.className = `hyoumoji-fav-star-btn ${isFav ? 'is-fav' : ''}`;
     starBtn.title = isFav ? 'Remove favorite' : 'Add to favorites';
     starBtn.textContent = isFav ? '★' : '☆';
@@ -648,66 +773,113 @@
       }
     });
 
-    // Body click (Attaches media without raw URL in text box, keeps Comment button active!)
+    // Body click (Attaches media with optional Anti-Spam Guard check)
     card.addEventListener('click', () => {
-      attachMediaToComment(activeCommentBox, activeEditable, mediaItem, type);
-      addRecent(type, mediaItem);
-      closePicker();
+      const doAttach = () => {
+        attachMediaToComment(activeCommentBox, activeEditable, mediaItem, type);
+        addRecent(type, mediaItem);
+        closePicker();
+      };
+
+      if (userStorage.linkProtection) {
+        showLinkWarningDialog(doAttach);
+      } else {
+        doAttach();
+      }
     });
 
     return card;
   }
 
-  // --- Live SafeSearch Media Fetcher (G-Rated, Strict Family-Friendly) ---
-  async function fetchLiveMedia(query, isSticker, gridElement) {
+  // --- Live SafeSearch Media Fetcher with Pagination & Fast Loading ---
+  async function fetchLiveMedia(query, isSticker, gridElement, isAppend = false) {
+    if (isFetchingMedia) return;
+    isFetchingMedia = true;
+
     try {
       const typeEndpoint = isSticker ? 'stickers' : 'gifs';
-      let endpoint = '';
+      const cleanQuery = cleanSearchQuery(query);
+      const rating = 'pg'; // PG unlocks full holiday/reaction library while blocking inappropriate content
+      const limit = 48; // Rich grid results
 
-      if (!query || query === 'trending') {
-        endpoint = `${GIPHY_BASE}/${typeEndpoint}/trending?api_key=${API_KEY}&limit=20&rating=g`;
+      let endpoint = '';
+      if (!cleanQuery || cleanQuery === 'trending') {
+        endpoint = `${GIPHY_BASE}/${typeEndpoint}/trending?api_key=${API_KEY}&limit=${limit}&offset=${currentOffset}&rating=${rating}`;
       } else {
-        endpoint = `${GIPHY_BASE}/${typeEndpoint}/search?api_key=${API_KEY}&q=${encodeURIComponent(query)}&limit=20&rating=g`;
+        endpoint = `${GIPHY_BASE}/${typeEndpoint}/search?api_key=${API_KEY}&q=${encodeURIComponent(cleanQuery)}&limit=${limit}&offset=${currentOffset}&rating=${rating}`;
       }
 
       const res = await fetch(endpoint);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
+      if (!isAppend) {
+        gridElement.innerHTML = '';
+      } else {
+        const oldLoader = gridElement.querySelector('.hyoumoji-pagination-loader');
+        if (oldLoader) oldLoader.remove();
+      }
+
       if (!data.data || data.data.length === 0) {
-        gridElement.innerHTML = `
-          <div class="hyoumoji-status-box" style="grid-column: 1 / -1;">
-            <span>No results found for "${query}"</span>
-          </div>
-        `;
+        if (!isAppend) {
+          gridElement.innerHTML = `
+            <div class="hyoumoji-status-box" style="grid-column: 1 / -1;">
+              <span>No results found for "${query}"</span>
+            </div>
+          `;
+        }
+        hasMoreMedia = false;
+        isFetchingMedia = false;
         return;
       }
 
-      // Clear loading spinner
-      gridElement.innerHTML = '';
-
       data.data.forEach(item => {
+        // Use downsized_medium / fixed_height for 20x faster thumbnail and comment rendering
         const preview = item.images?.fixed_height_small?.url ||
                         item.images?.fixed_height?.url ||
                         item.images?.original?.url;
-        const original = item.images?.original?.url || preview;
+        const fastMedia = item.images?.downsized_medium?.url ||
+                          item.images?.fixed_height?.url ||
+                          item.images?.original?.url || preview;
         if (!preview) return;
 
         const mediaObj = {
           title: item.title || (isSticker ? 'Sticker' : 'GIF'),
-          url: original,
+          url: fastMedia,
           previewUrl: preview
         };
 
         gridElement.appendChild(createMediaCard(mediaObj, isSticker ? 'stickers' : 'gifs'));
       });
+
+      currentOffset += data.data.length;
+      hasMoreMedia = (data.pagination?.total_count || 500) > currentOffset;
+
+      if (hasMoreMedia) {
+        const loader = document.createElement('div');
+        loader.className = 'hyoumoji-pagination-loader';
+        loader.style.gridColumn = '1 / -1';
+        loader.innerHTML = `
+          <button type="button" class="hyoumoji-load-more-btn">Load more ${isSticker ? 'stickers' : 'GIFs'}...</button>
+        `;
+        loader.querySelector('button').addEventListener('click', (e) => {
+          e.stopPropagation();
+          loader.innerHTML = '<div class="hyoumoji-spinner"></div>';
+          fetchLiveMedia(currentSearchQuery, isSticker, gridElement, true);
+        });
+        gridElement.appendChild(loader);
+      }
     } catch (err) {
       console.warn('[hyoumoji] Live media notice:', err.message);
-      gridElement.innerHTML = `
-        <div class="hyoumoji-status-box" style="grid-column: 1 / -1;">
-          <span>Could not load media. Check network connection.</span>
-        </div>
-      `;
+      if (!isAppend) {
+        gridElement.innerHTML = `
+          <div class="hyoumoji-status-box" style="grid-column: 1 / -1;">
+            <span>Could not load media. Check network connection.</span>
+          </div>
+        `;
+      }
+    } finally {
+      isFetchingMedia = false;
     }
   }
 
@@ -829,9 +1001,15 @@
         saveBtn.textContent = alreadyFav ? '★ Saved' : '⭐ Save';
         badge.appendChild(saveBtn);
 
+        let fastRenderUrl = mediaUrl;
+        if (fastRenderUrl.includes('giphy.com') && fastRenderUrl.endsWith('/giphy.gif')) {
+          fastRenderUrl = fastRenderUrl.replace(/\/giphy\.gif$/, '/200.gif');
+        }
+
         const img = document.createElement('img');
-        img.src = mediaUrl;
+        img.src = fastRenderUrl;
         img.loading = 'lazy';
+        img.decoding = 'async';
         img.alt = 'hyoumoji reaction';
         img.title = 'Click to open original';
         badge.appendChild(img);

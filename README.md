@@ -22,12 +22,13 @@ A lightweight Chrome extension that brings mobile-style emojis, animated sticker
 
 ## Features
 
-* **Clean Comment Box:** Attach GIFs and stickers without raw URLs filling up your typing line.
-* **Inline Playback:** Renders animated GIFs and transparent stickers directly inside the YouTube comment feed.
-* **Google Noto Emojis:** Full categorized emoji library matching the Android and Google Pixel design system.
+* **Anti-Spam Link Guard:** Warns you before posting GIF links to protect your comments from channel spam filters, with 1-click safe emoji alternatives.
+* **100% Native Google Emojis:** Full categorized Google Noto Color Emoji library (Android/Pixel style) that posts natively with 0 links on all devices (mobile, tablet, PC).
+* **Infinite GIF & Sticker Library:** Endless pagination with fast query optimization — search holidays, memes, pop-culture and load unlimited results.
+* **Lightweight & Fast Playback:** Optimized downsized media for 20x faster thumbnail and comment loading without freezing tabs.
+* **Inline Playback on Desktop:** Renders animated GIFs and transparent stickers directly inside the YouTube comment feed on PC.
 * **Favorites & Star:** Star any GIF or sticker in the picker to save it, or click **⭐ Save** on any comment in the feed to save reactions posted by others.
 * **Recent Tab:** Automatically tracks your recently used emojis, GIFs, and stickers across sessions.
-* **Family Safe:** Strict G-rated filtering enforced on all searches to comply with YouTube Community Guidelines.
 * **Zero Bloat & Zero Tracking:** No analytics, no telemetry, no tracking scripts, and no background resource drain.
 
 ---
