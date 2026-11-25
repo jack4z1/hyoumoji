@@ -1,10 +1,9 @@
 /**
- * Automated Test Suite & Security/Smoke Audit for hyoumoji
+ * Automated Security Audit, Credential/Leak Scan, Dataset Integrity & Context Tests for hyoumoji v2.0
  */
 
 const fs = require('fs');
 const path = require('path');
-const vm = require('vm');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 let testsPassed = 0;
@@ -22,212 +21,103 @@ function assert(condition, message) {
 
 async function runAllTests() {
   console.log('====================================================');
-  console.log('🧪 RUNNING HYOUMOJI SECURITY AUDIT & SMOKE TESTS');
+  console.log('🧪 RUNNING HYOUMOJI v2.0 SECURITY & INTEGRITY TESTS');
   console.log('====================================================\n');
 
-  // ----------------------------------------------------
-  // TEST 1: Manifest Integrity & Permissions Security
-  // ----------------------------------------------------
+  // 1. Manifest & Permissions Security
   console.log('--- TEST 1: Manifest Integrity & Permissions Security ---');
-  const manifestPath = path.join(ROOT_DIR, 'manifest.json');
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'manifest.json'), 'utf8'));
 
-  assert(manifest.manifest_version === 3, 'Manifest Version is 3 (Chrome standard)');
-  assert(manifest.name.includes('hyoumoji'), 'Manifest name is properly set');
-  assert(manifest.permissions && manifest.permissions.length === 1 && manifest.permissions[0] === 'storage',
-    'Permissions restricted strictly to "storage" (no invasive permissions like cookies, webRequest, tabs)');
+  assert(manifest.manifest_version === 3, 'Manifest Version is 3');
+  assert(manifest.permissions.length === 1 && manifest.permissions[0] === 'storage',
+    'Permissions strictly limited to "storage"');
+  assert(!manifest.host_permissions, 'Zero external API host_permissions');
+  assert(!manifest.background, 'Zero background service worker');
+  assert(manifest.content_scripts[0].all_frames === true, 'all_frames enabled safely for YouTube Live Chat iframe');
+  assert(manifest.web_accessible_resources[0].resources.includes('data/*.json'), 'Data JSONs exposed in web_accessible_resources');
+  assert(!fs.existsSync(path.join(ROOT_DIR, 'background.js')), 'Legacy background.js proxy cleanly removed');
+  assert(fs.existsSync(path.join(ROOT_DIR, manifest.icons['48'])), 'Extension icon exists');
 
-  const allowedHosts = [
-    '*://*.youtube.com/*',
-    'https://api.giphy.com/*',
-    'https://*.giphy.com/*',
-    'https://*.tenor.com/*',
-    'https://tenor.googleapis.com/*'
-  ];
-  const hostsMatch = manifest.host_permissions.every(h => allowedHosts.includes(h)) &&
-                     allowedHosts.every(h => manifest.host_permissions.includes(h));
-  assert(hostsMatch, 'Host permissions limited strictly to YouTube, GIPHY and Tenor CDNs');
-
-  // Verify background service worker and icons exist
-  assert(fs.existsSync(path.join(ROOT_DIR, manifest.background.service_worker)), 'Background Service Worker exists');
-  assert(fs.existsSync(path.join(ROOT_DIR, manifest.icons['16'])), 'Icon 16px exists');
-  assert(fs.existsSync(path.join(ROOT_DIR, manifest.icons['48'])), 'Icon 48px exists');
-  assert(fs.existsSync(path.join(ROOT_DIR, manifest.icons['128'])), 'Icon 128px exists');
-
-  // ----------------------------------------------------
-  // TEST 2: Personal Information & Data Leak Audit
-  // ----------------------------------------------------
-  console.log('\n--- TEST 2: Data Leak & Personal Information Audit ---');
+  // 2. Credential, Data Leak, External Network & XSS Audit
+  console.log('\n--- TEST 2: Credential, Data Leak & XSS Audit ---');
   const contentJs = fs.readFileSync(path.join(ROOT_DIR, 'content.js'), 'utf8');
-  const popupJs = fs.readFileSync(path.join(ROOT_DIR, 'popup.js'), 'utf8');
-  const backgroundJs = fs.readFileSync(path.join(ROOT_DIR, 'background.js'), 'utf8');
+  const contentCss = fs.readFileSync(path.join(ROOT_DIR, 'content.css'), 'utf8');
+  const popupHtml = fs.readFileSync(path.join(ROOT_DIR, 'popup.html'), 'utf8');
+  const readmeMd = fs.readFileSync(path.join(ROOT_DIR, 'README.md'), 'utf8');
 
-  // Check for telemetry, cookies, or user tracking
-  const leakKeywords = [
-    'google-analytics', 'mixpanel', 'amplitude', 'facebook',
-    'chrome.cookies', 'chrome.identity', 'password', 'authToken',
-    'navigator.sendBeacon'
+  const combinedSource = [contentJs, contentCss, popupHtml].join('\n');
+  const forbiddenRegexes = [
+    /api[_-]?key\s*[:=]/i,
+    /giphy\.com/i,
+    /tenor\./i,
+    /google-analytics|mixpanel|amplitude/i,
+    /chrome\.cookies|chrome\.identity|navigator\.sendBeacon/i,
+    /\beval\s*\(|new\s+Function\s*\(/i,
+    /fonts\.googleapis\.com/i,
+    /http:\/\//i
   ];
-  let foundLeak = false;
-  leakKeywords.forEach(kw => {
-    if (contentJs.includes(kw) || popupJs.includes(kw) || backgroundJs.includes(kw)) {
-      foundLeak = true;
-      console.error(`Found suspicious keyword: ${kw}`);
-    }
-  });
-  assert(!foundLeak, 'Zero tracking, analytics, or identity extraction detected');
+  const matched = forbiddenRegexes.filter(rx => rx.test(combinedSource));
+  assert(matched.length === 0, `Zero credentials, external endpoints, trackers, HTTP URLs, or eval() found`);
+  assert(!/giphy|tenor/i.test(readmeMd), 'README.md free of stale GIF/GIPHY/Tenor documentation');
+  assert(contentJs.includes("window.location.pathname.startsWith('/live_chat')"), 'Iframe guard restricts subframes strictly to YouTube /live_chat');
+  assert(contentJs.includes("cache: 'no-store'"), 'Local JSON loader disables stale browser cache');
+  assert(contentJs.includes("chrome.storage.local.remove(['hyoumoji_recents'"), 'Legacy v1 storage cache purged on startup');
+  assert(contentJs.includes('activeRenderId'), 'Async tab-switch race-condition guard present');
+  assert(contentCss.includes('prefers-reduced-motion'), 'CSS respects prefers-reduced-motion accessibility preference');
+  assert(contentCss.includes('box-sizing: border-box'), 'CSS isolates box-sizing against host page bleed');
 
-  // Check that dangerous execution functions are not used
-  assert(!contentJs.includes('eval(') && !backgroundJs.includes('eval(') && !contentJs.includes('new Function'), 'No dangerous eval() or Function() found');
+  // 3. Offline Dataset Integrity & XSS Safety
+  console.log('\n--- TEST 3: Offline Dataset Integrity & Safety ---');
+  const emojis = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'data/emojis.json'), 'utf8'));
+  const kaomoji = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'data/kaomoji.json'), 'utf8'));
+  const ascii = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'data/ascii_art.json'), 'utf8'));
 
-  // ----------------------------------------------------
-  // TEST 3: URL Sanitizer & XSS Prevention
-  // ----------------------------------------------------
-  console.log('\n--- TEST 3: URL Sanitizer & XSS Security Test ---');
+  assert(Array.isArray(emojis) && emojis.length > 1800, `Loaded ${emojis.length} keyword-searchable emojis`);
+  assert(Array.isArray(kaomoji) && kaomoji.length > 30000, `Loaded ${kaomoji.length} deduplicated kaomoji`);
+  assert(Array.isArray(ascii) && ascii.length > 5000, `Loaded ${ascii.length} ASCII & Braille artworks`);
 
-  // Extract sanitizeMediaUrl function logic from content.js
-  function testSanitizer(rawUrl) {
-    if (!rawUrl || typeof rawUrl !== 'string') return null;
-    if (/[\s"'<>\\]/.test(rawUrl)) return null;
-    try {
-      const parsed = new URL(rawUrl.trim());
-      if (parsed.protocol !== 'https:') return null;
-      const host = parsed.hostname.toLowerCase();
-      if (host.endsWith('tenor.com') || host.endsWith('tenor.googleapis.com') || host.endsWith('giphy.com')) {
-        return parsed.href;
-      }
-      if (parsed.pathname.endsWith('.gif') || parsed.pathname.endsWith('.webp')) {
-        return parsed.href;
-      }
-      return null;
-    } catch {
-      return null;
-    }
+  const fireEmoji = emojis.find(e => e.e === '🔥');
+  assert(fireEmoji && fireEmoji.k.includes('fire'), 'Emoji keyword search index includes "fire" for 🔥');
+
+  const hasDangerousHtml = [...kaomoji, ...ascii].some(x => /<(script|iframe|img|svg)\b/i.test(x.t));
+  assert(!hasDangerousHtml, 'Zero <script>/<iframe>/<img> XSS strings in compiled datasets');
+
+  // 4. Platform Context & Space-Fitting Filter Tests
+  console.log('\n--- TEST 4: Platform Context & Space-Fitting Filters ---');
+  function fitsContext(item, ctx) {
+    const len = item.c || (item.t ? item.t.length : 0);
+    const width = item.w || len;
+    const isMulti = Boolean(item.m);
+    const isBraille = Boolean(item.b);
+    if (len > ctx.maxChars) return false;
+    if (ctx.allowMultiline) return width <= ctx.maxWidth;
+    if (!isMulti) return true;
+    return Boolean(ctx.supportsAutoWrap && isBraille && width >= 20 && width <= ctx.maxWidth);
   }
 
-  // Safe valid URLs
-  assert(testSanitizer('https://media.tenor.com/vHq1A1x4mO8AAAAC/bongo-cat.gif') !== null, 'Valid Tenor GIF URL passes sanitizer');
-  assert(testSanitizer('https://c.tenor.com/test.gif') !== null, 'Valid Tenor subdomain URL passes sanitizer');
-  assert(testSanitizer('https://example.com/cute.webp') !== null, 'Valid HTTPS WebP image URL passes sanitizer');
+  const ctxYtLive = { maxChars: 200, allowMultiline: false, maxWidth: 28, supportsAutoWrap: false };
+  const ctxYtShort = { maxChars: 10000, allowMultiline: true, maxWidth: 32, supportsAutoWrap: false };
+  const ctxYtLong = { maxChars: 10000, allowMultiline: true, maxWidth: 80, supportsAutoWrap: false };
+  const ctxTwitch = { maxChars: 500, allowMultiline: false, maxWidth: 30, supportsAutoWrap: true };
+  const ctxTikTok = { maxChars: 150, allowMultiline: false, maxWidth: 28, supportsAutoWrap: false };
 
-  // Malicious URLs that MUST be rejected
-  assert(testSanitizer('javascript:alert(1)') === null, 'Rejects javascript: pseudo-protocol');
-  assert(testSanitizer('data:text/html,<script>alert(1)</script>') === null, 'Rejects data: URI injection');
-  assert(testSanitizer('http://media.tenor.com/unsecure.gif') === null, 'Rejects insecure HTTP (non-SSL) URLs');
-  assert(testSanitizer('https://evil-site.com/malware.exe') === null, 'Rejects unauthorized domains without valid image extensions');
-  assert(testSanitizer('https://media.tenor.com/" onerror="alert(1)') === null, 'Rejects URL with quote injection characters');
+  const singleLineKaomoji = { t: '(╯°□°）╯︵ ┻━┻', c: 13, w: 13, m: 0, b: 0 };
+  const long1Line = { t: 'x'.repeat(180), c: 180, w: 180, m: 0, b: 0 };
+  const wideAscii = { t: 'line1\nline2', c: 100, w: 60, m: 1, b: 0 };
+  const narrowBraille = { t: '⣿'.repeat(24) + '\n' + '⣿'.repeat(24), c: 49, w: 24, m: 1, b: 1 };
 
-  // ----------------------------------------------------
-  // TEST 4: Storage Logic, Recents & Favorites Capping
-  // ----------------------------------------------------
-  console.log('\n--- TEST 4: Storage Bounds & Memory Bloat Prevention ---');
+  assert(fitsContext(singleLineKaomoji, ctxYtLive) === true, '1-line kaomoji fits YouTube Live (200 chars)');
+  assert(fitsContext(long1Line, ctxTikTok) === false, '180-char text blocked on TikTok Live (150-char limit)');
+  assert(fitsContext(long1Line, ctxYtLive) === true, '180-char 1-line text allowed on YouTube Live (200-char limit)');
+  assert(fitsContext(wideAscii, ctxYtLive) === false, 'Multi-line ASCII blocked in YouTube Live Chat');
+  assert(fitsContext(wideAscii, ctxYtShort) === false, '60-char wide ASCII filtered out in YT Shorts (max 32w)');
+  assert(fitsContext(wideAscii, ctxYtLong) === true, '60-char wide ASCII allowed in YT Long-Form comments');
+  assert(fitsContext(narrowBraille, ctxTwitch) === true, '24-wide Braille allowed as Auto-Wrap on Twitch (<=500 chars)');
 
-  let testRecents = { emojis: [], gifs: [], stickers: [] };
-  let testFavorites = { gifs: [], stickers: [] };
-
-  function mockAddRecent(type, item) {
-    if (type === 'emojis') {
-      testRecents.emojis = testRecents.emojis.filter(e => e !== item);
-      testRecents.emojis.unshift(item);
-      if (testRecents.emojis.length > 24) testRecents.emojis.pop();
-    } else {
-      testRecents[type] = testRecents[type].filter(g => g.url !== item.url);
-      testRecents[type].unshift(item);
-      if (testRecents[type].length > 16) testRecents[type].pop();
-    }
-  }
-
-  function mockToggleFavorite(type, item) {
-    const idx = testFavorites[type].findIndex(f => f.url === item.url);
-    if (idx > -1) {
-      testFavorites[type].splice(idx, 1);
-      return false;
-    } else {
-      testFavorites[type].unshift(item);
-      if (testFavorites[type].length > 100) testFavorites[type].pop();
-      return true;
-    }
-  }
-
-  // Test deduplication
-  mockAddRecent('emojis', '🔥');
-  mockAddRecent('emojis', '😂');
-  mockAddRecent('emojis', '🔥');
-  assert(testRecents.emojis.length === 2 && testRecents.emojis[0] === '🔥', 'Recent emojis correctly deduplicated and moved to front');
-
-  // Test recents capping
-  for (let i = 0; i < 35; i++) {
-    mockAddRecent('emojis', `E${i}`);
-  }
-  assert(testRecents.emojis.length === 24, 'Recent emojis capped at 24 to prevent memory bloat');
-
-  // Test favorites capping
-  for (let i = 0; i < 120; i++) {
-    mockToggleFavorite('gifs', { url: `https://media.tenor.com/gif${i}.gif` });
-  }
-  assert(testFavorites.gifs.length === 100, 'Favorites capped at 100 to prevent storage exhaustion');
-
-  // Test favorite removal
-  const wasAdded = mockToggleFavorite('stickers', { url: 'https://media.tenor.com/cat.gif' });
-  assert(wasAdded === true, 'First toggle adds item to favorites');
-  const wasRemoved = mockToggleFavorite('stickers', { url: 'https://media.tenor.com/cat.gif' });
-  assert(wasRemoved === false, 'Second toggle removes item from favorites');
-
-  // ----------------------------------------------------
-  // TEST 5: Inline Comment Detection Regex
-  // ----------------------------------------------------
-  console.log('\n--- TEST 5: Comment Regex Detection Smoke Test ---');
-  const urlRegex = /(https?:\/\/(?:media\.tenor\.com\/[^\s"'>]+|tenor\.com\/view\/[^\s"'>]+|media\d*\.giphy\.com\/[^\s"'>]+|[^\s"'>]+\.(?:gif|webp))(?:\?[^\s"'>]*)?)/i;
-
-  const testComment1 = 'Great video dude! https://media.tenor.com/vHq1A1x4mO8AAAAC/bongo-cat.gif love it';
-  const match1 = testComment1.match(urlRegex);
-  assert(match1 && match1[1] === 'https://media.tenor.com/vHq1A1x4mO8AAAAC/bongo-cat.gif', 'Detects Tenor GIF link in standard comment');
-
-  const testComment2 = 'Check out this animated sticker https://tenor.com/view/pop-cat-cat-mouth-open-gif-18491823';
-  const match2 = testComment2.match(urlRegex);
-  assert(match2 && match2[1].includes('tenor.com/view/pop-cat'), 'Detects Tenor view link in comment');
-
-  const testComment3 = 'Regular comment with no links at all!';
-  const match3 = testComment3.match(urlRegex);
-  assert(match3 === null, 'Regular comment without links correctly ignored');
-
-  // ----------------------------------------------------
-  // TEST 6: Live Media API Parameters & Smoke Test
-  // ----------------------------------------------------
-  console.log('\n--- TEST 6: Live Media API Parameters & Smoke Test (G-Rated SafeSearch) ---');
-  try {
-    const startTime = Date.now();
-    const endpoint = 'https://api.giphy.com/v1/stickers/trending?api_key=sXpGFDGZs0Dv1mmNFvYaGUvYwKX0PWIh&limit=4&rating=g';
-    const res = await fetch(endpoint);
-    const duration = Date.now() - startTime;
-
-    assert(res.status === 200, `Media API responded with HTTP 200 OK (${duration}ms)`);
-    const data = await res.json();
-    assert(Array.isArray(data.data) && data.data.length > 0, `API returned ${data.data.length} sticker results`);
-
-    const firstItem = data.data[0];
-    const gifUrl = firstItem.images?.fixed_height_small?.url || firstItem.images?.original?.url;
-    assert(gifUrl && gifUrl.startsWith('https://'), `API returned secure HTTPS media URL: ${gifUrl.slice(0, 50)}...`);
-  } catch (err) {
-    if (err.message && err.message.includes('fetch failed')) {
-      console.log('  [NOTICE] Sandboxed offline mode: verified endpoint syntax & G-rated parameter configuration.');
-      assert(true, 'Media API URL syntax & G-rated SafeSearch parameters verified');
-    } else {
-      console.error('API test error:', err.message);
-      testsFailed++;
-    }
-  }
-
-  // ----------------------------------------------------
-  // SUMMARY
-  // ----------------------------------------------------
   console.log('\n====================================================');
   console.log(`🏁 TEST RESULTS: ${testsPassed} PASSED, ${testsFailed} FAILED`);
   console.log('====================================================');
-
-  if (testsFailed > 0) {
-    process.exit(1);
-  }
+  if (testsFailed > 0) process.exit(1);
 }
 
 runAllTests();

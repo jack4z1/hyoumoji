@@ -99,16 +99,16 @@ h1 {
 }
 
 .intro-card p {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
-  color: #b0b0bc;
+  color: #c4c4d4;
 }
 
 .steps-list {
   padding-left: 18px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
-  color: #b0b0bc;
+  color: #c4c4d4;
 }
 
 .steps-list li strong {
@@ -118,21 +118,22 @@ h1 {
 .feature-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  gap: 3px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 .feature-item:last-child {
   border-bottom: none;
   padding-bottom: 0;
 }
 .feature-item strong {
-  font-size: 11px;
+  font-size: 12px;
   color: #fff;
 }
 .feature-item span {
-  font-size: 10px;
-  color: #888899;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #a6a6ba;
 }
 
 /* Footer */

@@ -1,38 +1,101 @@
 /**
- * hyoumoji - YouTube Emojis, GIFs & Animated Stickers
- * Verified G-Rated Live GIF & Sticker Engine with Google Noto Emoji
+ * hyoumoji - Emojis, ASCII Faces & ASCII Art
+ * Context-aware expression picker for YouTube Comments, Shorts, Live Chat, Twitch, Kick, Rumble & TikTok.
+ * 100% offline text library — zero external API calls, zero links, zero credentials.
  */
 
 (function () {
   'use strict';
 
-  // Only execute in the top-level main window (never inside player, ads, or shorts subframes)
-  if (window !== window.top) {
-    return;
-  }
+  const isYtLiveFrame = window.location.hostname.includes('youtube.com') &&
+                        window.location.pathname.startsWith('/live_chat');
+  if (window !== window.top && !isYtLiveFrame) return;
 
-  // --- API Configuration (PG-Rated SafeSearch Enforced) ---
-  const API_KEY = 'sXpGFDGZs0Dv1mmNFvYaGUvYwKX0PWIh';
-  const GIPHY_BASE = 'https://api.giphy.com/v1';
-
-  // State
-  let activeCommentBox = null;
-  let activeEditable = null;
-  let pickerModal = null;
-  let activeTab = 'emojis'; // 'recent', 'favorites', 'emojis', 'gifs', 'stickers'
-  let currentSearchQuery = '';
-  let currentOffset = 0;
-  let isFetchingMedia = false;
-  let hasMoreMedia = true;
-
-  // In-memory cache for storage
-  let userStorage = {
-    recents: { emojis: [], gifs: [], stickers: [] },
-    favorites: { gifs: [], stickers: [] },
-    linkProtection: true // Warn before inserting GIF links into comments
+  const PLATFORM_CONTEXTS = {
+    yt_long: {
+      id: 'yt_long',
+      label: '💬 YT Comment',
+      maxChars: 10000,
+      allowMultiline: true,
+      maxWidth: 80,
+      supportsAutoWrap: false,
+      hint: 'Full multi-line ASCII & Braille art supported'
+    },
+    yt_short: {
+      id: 'yt_short',
+      label: '📱 YT Shorts',
+      maxChars: 10000,
+      allowMultiline: true,
+      maxWidth: 32,
+      supportsAutoWrap: false,
+      hint: 'Filtered to ≤32 chars wide so art stays clean on mobile'
+    },
+    yt_live: {
+      id: 'yt_live',
+      label: '🔴 YT Live (200)',
+      maxChars: 200,
+      allowMultiline: false,
+      maxWidth: 28,
+      supportsAutoWrap: false,
+      hint: 'Single-line only • 200 character limit'
+    },
+    twitch_live: {
+      id: 'twitch_live',
+      label: '🟣 Twitch (500)',
+      maxChars: 500,
+      allowMultiline: false,
+      maxWidth: 30,
+      supportsAutoWrap: true,
+      hint: 'Single-line & Auto-Wrap Braille (≤500 chars)'
+    },
+    kick_live: {
+      id: 'kick_live',
+      label: '🟢 Kick (500)',
+      maxChars: 500,
+      allowMultiline: false,
+      maxWidth: 30,
+      supportsAutoWrap: true,
+      hint: 'Single-line & Auto-Wrap Braille (≤500 chars)'
+    },
+    rumble_live: {
+      id: 'rumble_live',
+      label: '🟢 Rumble (200)',
+      maxChars: 200,
+      allowMultiline: false,
+      maxWidth: 28,
+      supportsAutoWrap: false,
+      hint: 'Single-line only • 200 character limit'
+    },
+    tiktok_live: {
+      id: 'tiktok_live',
+      label: '🎵 TikTok (150)',
+      maxChars: 150,
+      allowMultiline: false,
+      maxWidth: 28,
+      supportsAutoWrap: false,
+      hint: 'Single-line only • 150 character limit'
+    }
   };
 
-  // Helper to ensure extension context hasn't been invalidated during live reload
+  const DEFAULT_PAGE_LIMITS = { emojis: 160, kaomoji: 80, ascii: 50 };
+  const PAGE_STEP = { emojis: 160, kaomoji: 80, ascii: 50 };
+
+  let activeEditable = null;
+  let activeContext = PLATFORM_CONTEXTS.yt_long;
+  let fitToSpace = true;
+  let pickerModal = null;
+  let activeTab = 'emojis';
+  let activeSubFilter = 'all';
+  let currentSearchQuery = '';
+  let renderLimit = DEFAULT_PAGE_LIMITS.emojis;
+  let activeRenderId = 0;
+
+  const datasetCache = { emojis: null, kaomoji: null, ascii: null };
+  const userStorage = {
+    recents: { emojis: [], kaomoji: [], ascii: [] },
+    favorites: { emojis: [], kaomoji: [], ascii: [] }
+  };
+
   function isContextValid() {
     try {
       return Boolean(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
@@ -50,1002 +113,897 @@
     return '';
   }
 
-  function safeDecode(str) {
-    try {
-      return decodeURIComponent(str || '');
-    } catch {
-      return str || '';
-    }
+  function detectPlatformContext(targetEl) {
+    const host = (window.location.hostname || '').toLowerCase();
+    const path = (window.location.pathname || '').toLowerCase();
+
+    if (host.includes('twitch.tv')) return PLATFORM_CONTEXTS.twitch_live;
+    if (host.includes('kick.com')) return PLATFORM_CONTEXTS.kick_live;
+    if (host.includes('rumble.com')) return PLATFORM_CONTEXTS.rumble_live;
+    if (host.includes('tiktok.com')) return PLATFORM_CONTEXTS.tiktok_live;
+    if (!host.includes('youtube.com')) return PLATFORM_CONTEXTS.yt_long;
+
+    const inLiveChat = path.startsWith('/live_chat') || Boolean(
+      targetEl?.closest?.('yt-live-chat-text-input-field-renderer, yt-live-chat-message-input-renderer, #chat-messages')
+    );
+    if (inLiveChat) return PLATFORM_CONTEXTS.yt_live;
+    if (path.startsWith('/shorts')) return PLATFORM_CONTEXTS.yt_short;
+    return PLATFORM_CONTEXTS.yt_long;
   }
 
-  // --- Initialize Storage ---
+  function isDarkPageTheme() {
+    const html = document.documentElement;
+    if (html.hasAttribute('dark') || html.classList.contains('tw-root--theme-dark') || html.classList.contains('dark')) {
+      return true;
+    }
+    try {
+      const bg = window.getComputedStyle(document.body || html).backgroundColor;
+      const m = bg && bg.match(/\d+/g);
+      if (m && m.length >= 3) {
+        const lum = (0.299 * +m[0] + 0.587 * +m[1] + 0.114 * +m[2]);
+        if (lum < 128 && (!m[3] || +m[3] > 0)) return true;
+        if (lum >= 128) return false;
+      }
+    } catch {}
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
+  }
+
+  function applyThemeClass(modal) {
+    const dark = isDarkPageTheme();
+    modal.classList.toggle('hyoumoji-theme-dark', dark);
+    modal.classList.toggle('hyoumoji-theme-light', !dark);
+  }
+
+  // --- Storage (with automatic cleanup of legacy v1 keys) ---
+  function normalizeBucket(raw) {
+    return {
+      emojis: Array.isArray(raw?.emojis) ? raw.emojis : [],
+      kaomoji: Array.isArray(raw?.kaomoji) ? raw.kaomoji : [],
+      ascii: Array.isArray(raw?.ascii) ? raw.ascii : []
+    };
+  }
+
   function loadUserStorage(callback) {
     try {
-      if (isContextValid() && chrome.storage?.local) {
-        chrome.storage.local.get(['hyoumoji_recents', 'hyoumoji_favorites', 'hyoumoji_link_protection'], (data) => {
-          if (chrome.runtime?.lastError) {
-            if (callback) callback();
-            return;
-          }
-          if (data?.hyoumoji_recents) userStorage.recents = data.hyoumoji_recents;
-          if (data?.hyoumoji_favorites) userStorage.favorites = data.hyoumoji_favorites;
-          if (typeof data?.hyoumoji_link_protection === 'boolean') {
-            userStorage.linkProtection = data.hyoumoji_link_protection;
-          }
-          if (callback) callback();
-        });
+      if (!isContextValid() || !chrome.storage?.local) {
+        if (callback) callback();
         return;
       }
-    } catch {}
-    if (callback) callback();
-  }
-
-  function saveRecents() {
-    try {
-      if (isContextValid() && chrome.storage?.local) {
-        chrome.storage.local.set({ hyoumoji_recents: userStorage.recents });
-      }
-    } catch {}
-  }
-
-  function saveFavorites() {
-    try {
-      if (isContextValid() && chrome.storage?.local) {
-        chrome.storage.local.set({ hyoumoji_favorites: userStorage.favorites });
-      }
-    } catch {}
-  }
-
-  function saveLinkProtection(value) {
-    userStorage.linkProtection = value;
-    try {
-      if (isContextValid() && chrome.storage?.local) {
-        chrome.storage.local.set({ hyoumoji_link_protection: value });
-      }
-    } catch {}
-  }
-
-  // URL Sanitizer to prevent malicious or non-HTTPS URLs
-  function sanitizeMediaUrl(rawUrl) {
-    if (!rawUrl || typeof rawUrl !== 'string') return null;
-    // Disallow raw quotes, angle brackets, control characters, or spaces
-    if (/[\s"'<>\\]/.test(rawUrl)) return null;
-    try {
-      const parsed = new URL(rawUrl.trim());
-      if (parsed.protocol !== 'https:') return null;
-      const host = parsed.hostname.toLowerCase();
-      if (host.includes('giphy.com') || host.includes('tenor.com') || host.includes('googleusercontent.com')) {
-        return parsed.href;
-      }
-      if (parsed.pathname.endsWith('.gif') || parsed.pathname.endsWith('.webp') || parsed.pathname.endsWith('.png')) {
-        return parsed.href;
-      }
-      return null;
+      chrome.storage.local.remove(['hyoumoji_recents', 'hyoumoji_favorites', 'hyoumoji_link_protection']);
+      chrome.storage.local.get(['hyoumoji_recents_v2', 'hyoumoji_favorites_v2'], (data) => {
+        if (!chrome.runtime?.lastError) {
+          if (data?.hyoumoji_recents_v2) userStorage.recents = normalizeBucket(data.hyoumoji_recents_v2);
+          if (data?.hyoumoji_favorites_v2) userStorage.favorites = normalizeBucket(data.hyoumoji_favorites_v2);
+        }
+        if (callback) callback();
+      });
     } catch {
-      return null;
+      if (callback) callback();
     }
   }
 
-  function addRecent(type, item) {
-    if (!userStorage.recents[type]) userStorage.recents[type] = [];
-    if (type === 'emojis') {
-      userStorage.recents.emojis = userStorage.recents.emojis.filter(e => e !== item);
-      userStorage.recents.emojis.unshift(item);
-      if (userStorage.recents.emojis.length > 24) userStorage.recents.emojis.pop();
-    } else {
-      userStorage.recents[type] = userStorage.recents[type].filter(g => g.url !== item.url);
-      userStorage.recents[type].unshift(item);
-      if (userStorage.recents[type].length > 16) userStorage.recents[type].pop();
-    }
-    saveRecents();
-  }
-
-  function toggleFavorite(type, item) {
-    if (!userStorage.favorites[type]) userStorage.favorites[type] = [];
-    const index = userStorage.favorites[type].findIndex(f => f.url === item.url);
-    let added = false;
-    if (index > -1) {
-      userStorage.favorites[type].splice(index, 1);
-      showToast('Removed from Favorites');
-    } else {
-      userStorage.favorites[type].unshift(item);
-      if (userStorage.favorites[type].length > 100) {
-        userStorage.favorites[type].pop();
+  function persistBucket(storageKey, value) {
+    try {
+      if (isContextValid() && chrome.storage?.local) {
+        chrome.storage.local.set({ [storageKey]: value });
       }
-      showToast('⭐ Saved to Favorites!');
-      added = true;
+    } catch {}
+  }
+
+  function addRecent(type, value) {
+    const list = (userStorage.recents[type] ||= []);
+    const key = typeof value === 'string' ? value : value.t;
+    userStorage.recents[type] = [
+      value,
+      ...list.filter(item => (typeof item === 'string' ? item : item.t) !== key)
+    ].slice(0, 30);
+    persistBucket('hyoumoji_recents_v2', userStorage.recents);
+  }
+
+  function isFavorited(type, key) {
+    const list = userStorage.favorites[type];
+    return Array.isArray(list) && list.some(item => (typeof item === 'string' ? item : item.t) === key);
+  }
+
+  function toggleFavorite(type, value) {
+    const list = (userStorage.favorites[type] ||= []);
+    const key = typeof value === 'string' ? value : value.t;
+    const idx = list.findIndex(item => (typeof item === 'string' ? item : item.t) === key);
+
+    if (idx > -1) {
+      list.splice(idx, 1);
+      showToast('Removed from Favorites');
+      persistBucket('hyoumoji_favorites_v2', userStorage.favorites);
+      return false;
     }
-    saveFavorites();
-    return added;
+
+    list.unshift(value);
+    if (list.length > 150) list.pop();
+    showToast('Saved to Favorites');
+    persistBucket('hyoumoji_favorites_v2', userStorage.favorites);
+    return true;
   }
 
-  function isFavorited(type, url) {
-    if (!userStorage.favorites[type]) return false;
-    return userStorage.favorites[type].some(f => f.url === url);
-  }
-
-  // --- Toast Notification Helper ---
   function showToast(message) {
     let toast = document.getElementById('hyoumoji-toast-banner');
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'hyoumoji-toast-banner';
       toast.className = 'hyoumoji-toast';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
       document.body.appendChild(toast);
     }
     toast.textContent = message;
     toast.classList.add('show');
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => {
-      toast.classList.remove('show');
-    }, 2200);
+    toast._timer = setTimeout(() => toast.classList.remove('show'), 2200);
   }
 
-  // --- Official Google / Android (Noto Color Emoji) Categories ---
-  const GOOGLE_EMOJI_CATEGORIES = {
-    'Popular': ['🔥', '💀', '😂', '😭', '🗿', '❤️', '✨', '👏', '💯', '🚀', '👀', '🐐', '🤯', '🫡', '🥺', '👑', '🤩', '🤣', '🥳', '🙏', '🙌', '👍', '👎', '⚡', '💎', '🍿', '🎯', '💡', '💖', '😴', '🤝', '🕺', '💃', '🕶️', '🤡'],
-    'Smileys & Emotions': ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '🥹', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🥸', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🫣', '🤭', '🫢', '🫡', '🤫', '🫠', '🤥', '😶', '😐', '😑', '😬', '🫨', '😯', '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕'],
-    'Gestures & Body': ['👋', '🤚', '🖐️', '✋', '🖖', '🫱', '🫲', '🫳', '🫴', '👌', '🤌', '🤏', '✌️', '🤞', '🫰', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '🫶', '👐', '🤲', '🤝', '🙏', '✍️', '💅', '🤳', '💪'],
-    'Animals & Nature': ['🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐻‍❄️', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🙈', '🙉', '🙊', '🐒', '🐔', '🐧', '🐦', '🐤', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐢', '🐍', '🐙', '🦑', '🦐', '🦀', '🐬', '🐳', '🦈', '🐊', '🐅', '🐆', '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🦒', '🦘', '🦬', '🐐', '🐑', '🐈', '🐈‍⬛', '🐕', '🕊️', '🌸', '🌹', '🌻', '🌺', '🍀', '🌴'],
-    'Food & Drinks': ['🍎', '🍏', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🥑', '🍔', '🍟', '🍕', '🌭', '🥪', '🌮', '🌯', '🍜', '🍣', '🍱', '🍦', '🍧', '🍨', '🍩', '🍪', '🎂', '🍰', '🧁', '🍫', '🍿', '☕', '🍵', '🧃', '🥤', '🧋', '🍺', '🍻'],
-    'Activities & Objects': ['🎉', '🎊', '🎁', '🎈', '🏆', '🥇', '🥈', '🥉', '⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🎮', '🕹️', '🎲', '🧩', '🎸', '🎹', '🎺', '🎻', '🥁', '🎨', '🎬', '🎤', '🎧', '📱', '💻', '💡', '⏰', '⌛', '💎', '💰', '💵', '💳', '⚔️', '🛡️', '🔮', '🪄', '💣', '🧨', '🧿']
-  };
+  // --- Lazy Offline Loader (no-store prevents stale browser cache) ---
+  async function loadDataset(name) {
+    if (datasetCache[name]) return datasetCache[name];
+    const fileMap = {
+      emojis: 'data/emojis.json',
+      kaomoji: 'data/kaomoji.json',
+      ascii: 'data/ascii_art.json'
+    };
+    const url = getSafeExtensionUrl(fileMap[name]);
+    if (!url) return [];
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      datasetCache[name] = Array.isArray(json) ? json : [];
+      return datasetCache[name];
+    } catch (err) {
+      console.warn(`[hyoumoji] Could not load ${name}:`, err.message);
+      return [];
+    }
+  }
 
-  // --- Insertion Helper for YouTube's contenteditable editor ---
-  function insertIntoYouTubeComment(text) {
-    if (!activeEditable) {
-      console.warn('[hyoumoji] No active comment input target.');
+  function fitsContext(item, ctx) {
+    if (!fitToSpace) return true;
+    const len = item.c || (item.t ? item.t.length : 0);
+    const width = item.w || len;
+    const isMulti = Boolean(item.m);
+    const isBraille = Boolean(item.b);
+
+    if (len > ctx.maxChars) return false;
+    if (ctx.allowMultiline) return width <= ctx.maxWidth;
+    if (!isMulti) return true;
+    return Boolean(ctx.supportsAutoWrap && isBraille && width >= 20 && width <= ctx.maxWidth);
+  }
+
+  function prepareTextForInsert(item, ctx) {
+    const rawText = typeof item === 'string' ? item : item.t;
+    const useAutoWrap = Boolean(!ctx.allowMultiline && item?.m && item?.b && ctx.supportsAutoWrap);
+    if (!useAutoWrap) return rawText;
+
+    const lines = rawText.split('\n');
+    const targetWidth = Math.min(28, Math.max(...lines.map(l => l.length)));
+    return lines.map(line => line.padEnd(targetWidth, '⠀')).join('');
+  }
+
+  function copyToClipboardFallback(text) {
+    if (!navigator.clipboard?.writeText) {
+      showToast('Click a comment or chat box first');
+      return;
+    }
+    navigator.clipboard.writeText(text)
+      .then(() => showToast('Copied to clipboard (Ctrl+V to paste)'))
+      .catch(() => showToast('Click a comment or chat box first'));
+  }
+
+  function insertTextIntoTarget(text) {
+    if (!activeEditable || !activeEditable.isConnected) {
+      copyToClipboardFallback(text);
       return;
     }
 
     activeEditable.focus();
 
-    const success = document.execCommand('insertText', false, text);
-    if (!success) {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0);
-        range.deleteContents();
-        const textNode = document.createTextNode(text);
-        range.insertNode(textNode);
-        range.setStartAfter(textNode);
-        range.setEndAfter(textNode);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      } else {
-        activeEditable.textContent += text;
-      }
+    if (activeEditable.tagName === 'TEXTAREA' || activeEditable.tagName === 'INPUT') {
+      const start = activeEditable.selectionStart ?? activeEditable.value.length;
+      const end = activeEditable.selectionEnd ?? activeEditable.value.length;
+      activeEditable.value = activeEditable.value.slice(0, start) + text + activeEditable.value.slice(end);
+      const pos = start + text.length;
+      activeEditable.setSelectionRange(pos, pos);
+      activeEditable.dispatchEvent(new Event('input', { bubbles: true }));
+      activeEditable.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
     }
 
-    // Dispatch input & change events so YouTube's internal state updates
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, text);
+    } catch {
+      inserted = false;
+    }
+
+    if (!inserted) insertViaSelectionRange(activeEditable, text);
     activeEditable.dispatchEvent(new Event('input', { bubbles: true }));
     activeEditable.dispatchEvent(new Event('change', { bubbles: true }));
-    activeEditable.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: ' ' }));
-    activeEditable.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: ' ' }));
   }
 
-  // --- Attach GIF/Sticker into Comment (Hidden from typing line, keeps Comment button active!) ---
-  function attachMediaToComment(commentBox, editable, mediaItem, type) {
-    if (!editable) return;
-    editable.focus();
-
-    // Remove any previous hidden payload in this box
-    const oldPayload = editable.querySelector('.hyoumoji-hidden-payload');
-    if (oldPayload) oldPayload.remove();
-
-    // Create hidden payload span that enables YouTube's Comment button without showing raw URL
-    const span = document.createElement('span');
-    span.className = 'hyoumoji-hidden-payload';
-    span.setAttribute('contenteditable', 'false');
-    span.textContent = ` ${mediaItem.url} `;
-    editable.appendChild(span);
-
-    // Dispatch input & change events so YouTube recognizes non-empty text and enables the "Comment" button!
-    editable.dispatchEvent(new Event('input', { bubbles: true }));
-    editable.dispatchEvent(new Event('change', { bubbles: true }));
-    editable.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: ' ' }));
-    editable.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: ' ' }));
-
-    // Show visual draft preview card
-    showDraftPreview(commentBox, editable, mediaItem, type);
+  function insertViaSelectionRange(editable, text) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) {
+      editable.textContent += text;
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const node = document.createTextNode(text);
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.setEndAfter(node);
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 
-  // --- Live Draft Preview Inside Active YouTube Comment Box ---
-  function showDraftPreview(commentBox, editable, mediaItem, type) {
-    if (!commentBox) return;
-
-    // Remove any existing draft preview in this box
-    const oldPreview = commentBox.querySelector('.hyoumoji-draft-preview-container');
-    if (oldPreview) oldPreview.remove();
-
-    const previewContainer = document.createElement('div');
-    previewContainer.className = 'hyoumoji-draft-preview-container';
-
-    const thumb = document.createElement('img');
-    thumb.className = 'hyoumoji-draft-preview-thumb';
-    thumb.src = mediaItem.previewUrl || mediaItem.url;
-    thumb.alt = mediaItem.title;
-    previewContainer.appendChild(thumb);
-
-    const info = document.createElement('div');
-    info.className = 'hyoumoji-draft-preview-info';
-
-    const badge = document.createElement('span');
-    badge.className = 'hyoumoji-draft-badge';
-    badge.textContent = type === 'stickers' ? 'Attached Sticker' : 'Attached GIF';
-    info.appendChild(badge);
-
-    const title = document.createElement('span');
-    title.className = 'hyoumoji-draft-title';
-    title.textContent = mediaItem.title || 'Reaction';
-    info.appendChild(title);
-
-    previewContainer.appendChild(info);
-
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'hyoumoji-draft-remove-btn';
-    removeBtn.title = 'Remove attached media';
-    removeBtn.textContent = '✕';
-    removeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      previewContainer.remove();
-      if (editable) {
-        const payload = editable.querySelector('.hyoumoji-hidden-payload');
-        if (payload) payload.remove();
-        editable.dispatchEvent(new Event('input', { bubbles: true }));
-        editable.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    });
-    previewContainer.appendChild(removeBtn);
-
-    // Automatically remove draft preview when user clicks Comment or Cancel
-    const submitBtn = commentBox.querySelector('#submit-button');
-    if (submitBtn && !submitBtn.hasAttribute('data-hyoumoji-cleanup-bound')) {
-      submitBtn.setAttribute('data-hyoumoji-cleanup-bound', 'true');
-      submitBtn.addEventListener('click', () => {
-        setTimeout(() => {
-          const p = commentBox.querySelector('.hyoumoji-draft-preview-container');
-          if (p) p.remove();
-        }, 500);
-      });
-    }
-
-    const cancelBtn = commentBox.querySelector('#cancel-button');
-    if (cancelBtn && !cancelBtn.hasAttribute('data-hyoumoji-cancel-bound')) {
-      cancelBtn.setAttribute('data-hyoumoji-cancel-bound', 'true');
-      cancelBtn.addEventListener('click', () => {
-        const p = commentBox.querySelector('.hyoumoji-draft-preview-container');
-        if (p) p.remove();
-        const payload = editable ? editable.querySelector('.hyoumoji-hidden-payload') : null;
-        if (payload) payload.remove();
-      });
-    }
-
-    // Place preview right below input-container or above buttons
-    const inputContainer = commentBox.querySelector('#input-container') || commentBox.querySelector('#placeholder-area');
-    if (inputContainer && inputContainer.parentNode) {
-      inputContainer.parentNode.insertBefore(previewContainer, inputContainer.nextSibling);
-    } else {
-      commentBox.prepend(previewContainer);
-    }
-  }
-
-  // --- Picker Modal Creation & Management ---
+  // --- Modal Shell & Search Controls ---
   function createPickerModal() {
-    if (document.getElementById('hyoumoji-picker-container')) {
-      return document.getElementById('hyoumoji-picker-container');
-    }
+    const existing = document.getElementById('hyoumoji-picker-container');
+    if (existing) return existing;
 
     const modal = document.createElement('div');
     modal.id = 'hyoumoji-picker-container';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-label', 'hyoumoji expression picker');
     modal.style.display = 'none';
 
     const iconUrl = getSafeExtensionUrl('icons/icon48.png');
-
     modal.innerHTML = `
       <div class="hyoumoji-header">
         <div class="hyoumoji-title">
-          ${iconUrl ? `<img src="${iconUrl}" class="hyoumoji-header-icon" alt="hyoumoji" />` : '✨'}
-          hyoumoji
+          ${iconUrl ? `<img src="${iconUrl}" class="hyoumoji-header-icon" alt="" />` : ''}
+          <span>hyoumoji</span>
+          <span class="hyoumoji-context-pill" id="hyoumoji-context-badge"></span>
         </div>
-        <button type="button" class="hyoumoji-close-btn" title="Close">✕</button>
+        <div class="hyoumoji-header-actions">
+          <button type="button" class="hyoumoji-fit-toggle active" id="hyoumoji-fit-btn" aria-pressed="true" title="Filter results to fit current chat or comment box">Fit Space</button>
+          <button type="button" class="hyoumoji-close-btn" aria-label="Close picker" title="Close (Esc)">✕</button>
+        </div>
       </div>
 
-      <div class="hyoumoji-tabs">
-        <button class="hyoumoji-tab-btn" data-tab="recent" title="Recently Used">🕒 Recent</button>
-        <button class="hyoumoji-tab-btn" data-tab="favorites" title="Starred Favorites">⭐ Favs</button>
-        <button class="hyoumoji-tab-btn active" data-tab="emojis" title="Google Noto Emojis">😀 Emojis</button>
-        <button class="hyoumoji-tab-btn" data-tab="gifs" title="Trending & Search GIFs">🎬 GIFs</button>
-        <button class="hyoumoji-tab-btn" data-tab="stickers" title="Animated Stickers">🎀 Stickers</button>
+      <div class="hyoumoji-tabs" role="tablist" aria-label="Expression categories">
+        <button type="button" class="hyoumoji-tab-btn" data-tab="recent" role="tab" aria-selected="false">Recent</button>
+        <button type="button" class="hyoumoji-tab-btn" data-tab="favorites" role="tab" aria-selected="false">Favs</button>
+        <button type="button" class="hyoumoji-tab-btn active" data-tab="emojis" role="tab" aria-selected="true">Emojis</button>
+        <button type="button" class="hyoumoji-tab-btn" data-tab="kaomoji" role="tab" aria-selected="false" title="ASCII Faces">ASCII Faces</button>
+        <button type="button" class="hyoumoji-tab-btn" data-tab="ascii" role="tab" aria-selected="false" title="ASCII & Braille Art">ASCII Art</button>
       </div>
 
       <div class="hyoumoji-search-container">
-        <input type="text" class="hyoumoji-search-input" placeholder="Search Google emojis, GIFs & stickers..." />
+        <div class="hyoumoji-search-group">
+          <input type="text" class="hyoumoji-search-input" aria-label="Search expressions" placeholder="Search emojis, ASCII faces & ASCII art..." />
+          <button type="button" class="hyoumoji-search-clear-btn" aria-label="Clear search" title="Clear" style="display:none;">✕</button>
+          <button type="button" class="hyoumoji-search-btn" aria-label="Search" title="Search">🔍</button>
+        </div>
       </div>
 
       <div class="hyoumoji-chips-row" id="hyoumoji-chips-container"></div>
-
       <div class="hyoumoji-body" id="hyoumoji-tab-content"></div>
 
       <div class="hyoumoji-footer-tip">
-        <span>Infinite Library • 500+ GIFs per Search</span>
-        <span style="opacity: 0.8;">hyoumoji</span>
+        <span id="hyoumoji-footer-hint">100% Native Text • Zero Links</span>
+        <span class="hyoumoji-brand-tag">hyoumoji</span>
       </div>
     `;
 
     document.body.appendChild(modal);
+    bindModalEvents(modal);
+    return modal;
+  }
+
+  function bindModalEvents(modal) {
+    const searchInput = modal.querySelector('.hyoumoji-search-input');
+    const clearBtn = modal.querySelector('.hyoumoji-search-clear-btn');
+    const searchBtn = modal.querySelector('.hyoumoji-search-btn');
+    const fitBtn = modal.querySelector('#hyoumoji-fit-btn');
+    let debounceTimer = null;
+
+    const runSearch = () => {
+      clearTimeout(debounceTimer);
+      currentSearchQuery = searchInput.value.trim().toLowerCase();
+      clearBtn.style.display = searchInput.value ? 'inline-flex' : 'none';
+      renderLimit = DEFAULT_PAGE_LIMITS[activeTab] || 80;
+      renderTabContent();
+    };
 
     modal.querySelector('.hyoumoji-close-btn').addEventListener('click', closePicker);
 
-    // Infinite scroll listener on tab content container
-    const bodyContent = modal.querySelector('#hyoumoji-tab-content');
-    if (bodyContent) {
-      bodyContent.addEventListener('scroll', () => {
-        if (activeTab === 'gifs' || activeTab === 'stickers') {
-          if (!isFetchingMedia && hasMoreMedia) {
-            if (bodyContent.scrollTop + bodyContent.clientHeight >= bodyContent.scrollHeight - 160) {
-              const grid = bodyContent.querySelector('.hyoumoji-media-grid');
-              if (grid) {
-                fetchLiveMedia(currentSearchQuery, activeTab === 'stickers', grid, true);
-              }
-            }
-          }
-        }
-      });
-    }
+    fitBtn.addEventListener('click', () => {
+      fitToSpace = !fitToSpace;
+      fitBtn.classList.toggle('active', fitToSpace);
+      fitBtn.setAttribute('aria-pressed', String(fitToSpace));
+      fitBtn.textContent = fitToSpace ? 'Fit Space' : 'Show All';
+      renderLimit = DEFAULT_PAGE_LIMITS[activeTab] || 80;
+      renderTabContent();
+    });
 
     modal.querySelectorAll('.hyoumoji-tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        modal.querySelectorAll('.hyoumoji-tab-btn').forEach(b => b.classList.remove('active'));
+        modal.querySelectorAll('.hyoumoji-tab-btn').forEach(b => {
+          b.classList.remove('active');
+          b.setAttribute('aria-selected', 'false');
+        });
         btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
         activeTab = btn.getAttribute('data-tab');
+        activeSubFilter = 'all';
+        renderLimit = DEFAULT_PAGE_LIMITS[activeTab] || 80;
         renderTabContent();
       });
     });
 
-    const searchInput = modal.querySelector('.hyoumoji-search-input');
-    let debounceTimer;
-    searchInput.addEventListener('input', (e) => {
+    searchInput.addEventListener('input', () => {
+      clearBtn.style.display = searchInput.value ? 'inline-flex' : 'none';
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        currentSearchQuery = e.target.value.trim().toLowerCase();
-        renderTabContent();
-      }, 250);
+      debounceTimer = setTimeout(runSearch, 180);
     });
 
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
-        clearTimeout(debounceTimer);
-        currentSearchQuery = e.target.value.trim().toLowerCase();
-        renderTabContent();
+        e.preventDefault();
+        runSearch();
       }
+    });
+
+    searchBtn.addEventListener('click', runSearch);
+    clearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      runSearch();
+      searchInput.focus();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal.style.display !== 'none') closePicker();
     });
 
     document.addEventListener('mousedown', (e) => {
-      if (modal.style.display !== 'none') {
-        if (!modal.contains(e.target) && !e.target.closest('.hyoumoji-trigger-btn') && !e.target.closest('.hyoumoji-save-btn')) {
-          closePicker();
-        }
+      if (modal.style.display === 'none') return;
+      if (!modal.contains(e.target) && !e.target.closest('.hyoumoji-trigger-btn')) {
+        closePicker();
       }
     });
-
-    return modal;
   }
 
-  function openPicker(triggerBtn, commentBox, editable) {
-    if (!pickerModal) {
-      pickerModal = createPickerModal();
-    }
+  function openPicker(triggerBtn, editable) {
+    if (!pickerModal) pickerModal = createPickerModal();
 
-    activeCommentBox = commentBox;
     activeEditable = editable;
+    activeContext = detectPlatformContext(editable);
+    applyThemeClass(pickerModal);
+
+    const badge = pickerModal.querySelector('#hyoumoji-context-badge');
+    const hint = pickerModal.querySelector('#hyoumoji-footer-hint');
+    if (badge) badge.textContent = activeContext.label;
+    if (hint) hint.textContent = activeContext.hint;
 
     const rect = triggerBtn.getBoundingClientRect();
-    const modalWidth = 460;
-    const modalHeight = 520;
+    const modalWidth = Math.min(440, window.innerWidth - 16);
+    const modalHeight = Math.min(500, window.innerHeight - 20);
 
-    let left = rect.left;
+    let left = Math.min(rect.left, window.innerWidth - modalWidth - 8);
+    left = Math.max(8, left);
+
     let top = rect.bottom + window.scrollY + 8;
-
-    if (left + modalWidth > window.innerWidth - 16) {
-      left = window.innerWidth - modalWidth - 16;
-    }
-    if (left < 16) left = 16;
-
     if (rect.bottom + modalHeight > window.innerHeight && rect.top > modalHeight) {
       top = rect.top + window.scrollY - modalHeight - 8;
     }
 
-    pickerModal.style.left = `${Math.max(10, left)}px`;
-    pickerModal.style.top = `${Math.max(10, top)}px`;
+    pickerModal.style.left = `${left}px`;
+    pickerModal.style.top = `${Math.max(8, top)}px`;
     pickerModal.style.display = 'flex';
 
+    renderLimit = DEFAULT_PAGE_LIMITS[activeTab] || 80;
     renderTabContent();
 
-    setTimeout(() => {
-      const search = pickerModal.querySelector('.hyoumoji-search-input');
-      if (search) search.focus();
-    }, 100);
+    setTimeout(() => pickerModal.querySelector('.hyoumoji-search-input')?.focus(), 60);
   }
 
   function closePicker() {
-    if (pickerModal) {
-      pickerModal.style.display = 'none';
-      currentSearchQuery = '';
-      const input = pickerModal.querySelector('.hyoumoji-search-input');
-      if (input) input.value = '';
-    }
-  }
-
-  // --- Render Tabs Content ---
-  function renderTabContent() {
     if (!pickerModal) return;
-    try {
-      currentOffset = 0;
-      hasMoreMedia = true;
-
-      const container = pickerModal.querySelector('#hyoumoji-tab-content');
-      const chipsContainer = pickerModal.querySelector('#hyoumoji-chips-container');
-      if (chipsContainer) chipsContainer.innerHTML = '';
-      if (container) container.innerHTML = '';
-
-      if (activeTab === 'recent') {
-        renderRecentTab(container);
-      } else if (activeTab === 'favorites') {
-        renderFavoritesTab(container);
-      } else if (activeTab === 'emojis') {
-        renderEmojisTab(container, chipsContainer);
-      } else if (activeTab === 'gifs') {
-        renderMediaTab(container, chipsContainer, false);
-      } else if (activeTab === 'stickers') {
-        renderMediaTab(container, chipsContainer, true);
-      }
-    } catch (err) {
-      console.warn('[hyoumoji] Tab render notice:', err);
-    }
+    pickerModal.style.display = 'none';
+    currentSearchQuery = '';
+    const input = pickerModal.querySelector('.hyoumoji-search-input');
+    const clearBtn = pickerModal.querySelector('.hyoumoji-search-clear-btn');
+    if (input) input.value = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    // Release heavy expression arrays when modal closes so idle memory stays minimal
+    datasetCache.kaomoji = null;
+    datasetCache.ascii = null;
   }
 
-  // 1. Recent Tab
-  function renderRecentTab(container) {
-    const { emojis, gifs, stickers } = userStorage.recents;
-    const hasAny = (emojis && emojis.length > 0) || (gifs && gifs.length > 0) || (stickers && stickers.length > 0);
-
-    if (!hasAny) {
-      container.innerHTML = `
-        <div class="hyoumoji-status-box">
-          <span style="font-size: 32px;">🕒</span>
-          <strong>No recents yet</strong>
-          <p>Emojis, GIFs, and stickers you pick will show up right here!</p>
-        </div>
-      `;
-      return;
-    }
-
-    if (emojis && emojis.length > 0) {
-      const title = document.createElement('div');
-      title.className = 'hyoumoji-section-title';
-      title.textContent = 'Recent Emojis';
-      container.appendChild(title);
-
-      const emojiGrid = document.createElement('div');
-      emojiGrid.className = 'hyoumoji-emoji-grid';
-      emojis.forEach(emoji => {
-        const item = document.createElement('div');
-        item.className = 'hyoumoji-emoji-item';
-        item.textContent = emoji;
-        item.addEventListener('click', () => {
-          insertIntoYouTubeComment(emoji);
-          addRecent('emojis', emoji);
-        });
-        emojiGrid.appendChild(item);
-      });
-      container.appendChild(emojiGrid);
-    }
-
-    if (gifs && gifs.length > 0) {
-      const title = document.createElement('div');
-      title.className = 'hyoumoji-section-title';
-      title.textContent = 'Recent GIFs';
-      container.appendChild(title);
-
-      const gifGrid = document.createElement('div');
-      gifGrid.className = 'hyoumoji-media-grid';
-      gifs.forEach(gif => {
-        gifGrid.appendChild(createMediaCard(gif, 'gifs'));
-      });
-      container.appendChild(gifGrid);
-    }
-
-    if (stickers && stickers.length > 0) {
-      const title = document.createElement('div');
-      title.className = 'hyoumoji-section-title';
-      title.textContent = 'Recent Stickers';
-      container.appendChild(title);
-
-      const stickerGrid = document.createElement('div');
-      stickerGrid.className = 'hyoumoji-media-grid';
-      stickers.forEach(sticker => {
-        stickerGrid.appendChild(createMediaCard(sticker, 'stickers'));
-      });
-      container.appendChild(stickerGrid);
-    }
-  }
-
-  // 2. Favorites Tab
-  function renderFavoritesTab(container) {
-    const { gifs, stickers } = userStorage.favorites;
-    const hasAny = (gifs && gifs.length > 0) || (stickers && stickers.length > 0);
-
-    if (!hasAny) {
-      container.innerHTML = `
-        <div class="hyoumoji-status-box">
-          <span style="font-size: 32px;">⭐</span>
-          <strong>No favorites saved yet</strong>
-          <p>Click the ⭐ star icon on any GIF/sticker, or click "⭐ Save" on any YouTube comment to build your collection!</p>
-        </div>
-      `;
-      return;
-    }
-
-    if (gifs && gifs.length > 0) {
-      const title = document.createElement('div');
-      title.className = 'hyoumoji-section-title';
-      title.textContent = `Saved GIFs (${gifs.length})`;
-      container.appendChild(title);
-
-      const gifGrid = document.createElement('div');
-      gifGrid.className = 'hyoumoji-media-grid';
-      gifs.forEach(gif => {
-        gifGrid.appendChild(createMediaCard(gif, 'gifs'));
-      });
-      container.appendChild(gifGrid);
-    }
-
-    if (stickers && stickers.length > 0) {
-      const title = document.createElement('div');
-      title.className = 'hyoumoji-section-title';
-      title.textContent = `Saved Stickers (${stickers.length})`;
-      container.appendChild(title);
-
-      const stickerGrid = document.createElement('div');
-      stickerGrid.className = 'hyoumoji-media-grid';
-      stickers.forEach(sticker => {
-        stickerGrid.appendChild(createMediaCard(sticker, 'stickers'));
-      });
-      container.appendChild(stickerGrid);
-    }
-  }
-
-  // 3. Emojis Tab
-  function renderEmojisTab(container, chipsContainer) {
-    const categories = Object.keys(GOOGLE_EMOJI_CATEGORIES);
-    categories.forEach(cat => {
-      const chip = document.createElement('div');
-      chip.className = 'hyoumoji-chip';
-      chip.textContent = cat;
+  // --- Shared UI Helpers ---
+  function renderChips(chipsContainer, defs) {
+    if (!chipsContainer) return;
+    defs.forEach(chipDef => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = `hyoumoji-chip ${activeSubFilter === chipDef.id ? 'active' : ''}`;
+      chip.textContent = chipDef.label;
       chip.addEventListener('click', () => {
-        const target = container.querySelector(`[data-cat-header="${cat}"]`);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-      chipsContainer.appendChild(chip);
-    });
-
-    const grid = document.createElement('div');
-    grid.className = 'hyoumoji-emoji-grid';
-
-    let allEmojis = [];
-    categories.forEach(cat => {
-      GOOGLE_EMOJI_CATEGORIES[cat].forEach(e => allEmojis.push(e));
-    });
-    allEmojis = Array.from(new Set(allEmojis));
-
-    let displayList = allEmojis;
-    if (currentSearchQuery) {
-      displayList = allEmojis.filter(emoji => emoji.includes(currentSearchQuery));
-      if (displayList.length === 0) displayList = allEmojis.slice(0, 48);
-    }
-
-    displayList.forEach(emoji => {
-      const item = document.createElement('div');
-      item.className = 'hyoumoji-emoji-item';
-      item.textContent = emoji;
-      item.addEventListener('click', () => {
-        insertIntoYouTubeComment(emoji);
-        addRecent('emojis', emoji);
-      });
-      grid.appendChild(item);
-    });
-
-    container.appendChild(grid);
-  }
-
-  // 4 & 5. GIFs & Animated Stickers Live Tab
-  function renderMediaTab(container, chipsContainer, isSticker) {
-    const chips = isSticker
-      ? ['Trending', '🎃 Halloween', 'Cute', 'Love', 'Cat', 'Anime', 'Pepe', 'Wow', 'Party']
-      : ['Trending', '🎃 Halloween', '😂 Laugh', '🔥 Fire', '💀 Skull', '🐱 Cat', '💃 Dance', '🎉 Celebrate', '😭 Cry', '👀 Sus', '❤️ Love', '🤯 Mind Blown'];
-
-    chips.forEach(tag => {
-      const isTrending = tag === 'Trending';
-      const cleanTag = tag.replace(/^[^\w\s]+\s*/, '');
-      const chip = document.createElement('div');
-      chip.className = `hyoumoji-chip ${(!currentSearchQuery && isTrending) || currentSearchQuery === cleanTag.toLowerCase() ? 'active' : ''}`;
-      chip.textContent = tag;
-      chip.addEventListener('click', () => {
-        currentSearchQuery = isTrending ? '' : cleanTag.toLowerCase();
-        pickerModal.querySelector('.hyoumoji-search-input').value = currentSearchQuery;
+        activeSubFilter = chipDef.id;
+        renderLimit = DEFAULT_PAGE_LIMITS[activeTab] || 80;
         renderTabContent();
       });
       chipsContainer.appendChild(chip);
     });
-
-    const grid = document.createElement('div');
-    grid.className = 'hyoumoji-media-grid';
-
-    // Show loading spinner
-    const spinnerBox = document.createElement('div');
-    spinnerBox.className = 'hyoumoji-status-box';
-    spinnerBox.style.gridColumn = '1 / -1';
-    spinnerBox.innerHTML = `
-      <div class="hyoumoji-spinner"></div>
-      <span>Loading ${isSticker ? 'animated stickers' : 'trending GIFs'}...</span>
-    `;
-    grid.appendChild(spinnerBox);
-
-    container.appendChild(grid);
-
-    // Fetch live media from endpoint
-    fetchLiveMedia(currentSearchQuery || '', isSticker, grid);
   }
 
-  // Strip helper words like "gif" or "sticker" from search queries to maximize result count
-  function cleanSearchQuery(q) {
-    if (!q || typeof q !== 'string') return '';
-    return q.replace(/\b(gifs?|stickers?|animated|animation)\b/gi, '').trim();
+  function renderLoadMore(container, remaining, step) {
+    if (remaining <= 0) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'hyoumoji-pagination-loader';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hyoumoji-load-more-btn';
+    btn.textContent = `Load More (${remaining.toLocaleString()} remaining)`;
+    btn.addEventListener('click', () => {
+      renderLimit += step;
+      renderTabContent();
+    });
+    wrap.appendChild(btn);
+    container.appendChild(wrap);
   }
 
-  // --- Helper to Create Media Card with Favorite Star ---
-  function createMediaCard(mediaItem, type) {
+  function renderEmptyState(container, icon, titleText, descText) {
+    const box = document.createElement('div');
+    box.className = 'hyoumoji-status-box';
+    const ico = document.createElement('span');
+    ico.className = 'hyoumoji-status-icon';
+    ico.textContent = icon;
+    const title = document.createElement('strong');
+    title.textContent = titleText;
+    const desc = document.createElement('p');
+    desc.textContent = descText;
+    box.append(ico, title, desc);
+    container.appendChild(box);
+  }
+
+  function createEmojiButton(emojiObj) {
+    const emojiChar = typeof emojiObj === 'string' ? emojiObj : emojiObj.e;
+    const keywords = typeof emojiObj === 'string' ? '' : (emojiObj.k || '');
+
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'hyoumoji-emoji-item';
+    item.textContent = emojiChar;
+    item.title = keywords ? `${emojiChar} — ${keywords.split(' ').slice(0, 5).join(', ')}` : emojiChar;
+    item.setAttribute('aria-label', keywords ? keywords.split(' ').slice(0, 3).join(' ') : emojiChar);
+    item.addEventListener('click', () => {
+      insertTextIntoTarget(emojiChar);
+      addRecent('emojis', emojiChar);
+    });
+    return item;
+  }
+
+  function createMiniBadge(text, extraClass = '') {
+    const badge = document.createElement('span');
+    badge.className = extraClass ? `hyoumoji-mini-badge ${extraClass}` : 'hyoumoji-mini-badge';
+    badge.textContent = text;
+    return badge;
+  }
+
+  function createExpressionCard(item, storageType) {
+    const rawText = typeof item === 'string' ? item : item.t;
+    const isMulti = Boolean(item.m);
+    const isBraille = Boolean(item.b);
+    const charCount = item.c || rawText.length;
+    const width = item.w || charCount;
+    const isAutoWrap = !activeContext.allowMultiline && isMulti && isBraille && activeContext.supportsAutoWrap;
+
     const card = document.createElement('div');
-    card.className = `hyoumoji-media-item ${type === 'stickers' ? 'hyoumoji-sticker-item' : ''}`;
-    const safeTitle = mediaItem.title || (type === 'stickers' ? 'Sticker' : 'GIF');
-    card.title = safeTitle;
+    card.className = `hyoumoji-expr-card ${isMulti ? 'is-multiline' : 'is-singleline'}`;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', item.k ? `Insert ${item.k.split(' ').slice(0, 4).join(' ')}` : 'Insert expression');
 
-    const safeUrl = sanitizeMediaUrl(mediaItem.url) || mediaItem.url;
-    const safePreview = sanitizeMediaUrl(mediaItem.previewUrl) || safeUrl;
-    const isFav = isFavorited(type, safeUrl);
+    const preview = document.createElement('pre');
+    preview.className = `hyoumoji-expr-preview ${isBraille ? 'is-braille' : ''}`;
+    preview.textContent = rawText;
 
-    const img = document.createElement('img');
-    img.src = safePreview;
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    img.alt = safeTitle;
-    card.appendChild(img);
+    const metaRow = document.createElement('div');
+    metaRow.className = 'hyoumoji-expr-meta';
 
+    const badges = document.createElement('div');
+    badges.className = 'hyoumoji-expr-badges';
+    badges.appendChild(createMiniBadge(`${charCount}c`));
+    if (isAutoWrap) badges.appendChild(createMiniBadge('Auto-Wrap', 'is-autowrap'));
+    else if (!isMulti) badges.appendChild(createMiniBadge('1-Line', 'is-safe'));
+    else if (!activeContext.allowMultiline) badges.appendChild(createMiniBadge('Multi-line', 'is-warn'));
+    else if (width <= 32) badges.appendChild(createMiniBadge('Mobile OK', 'is-safe'));
+
+    const actions = document.createElement('div');
+    actions.className = 'hyoumoji-expr-actions';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'hyoumoji-mini-btn';
+    copyBtn.title = 'Copy to clipboard';
+    copyBtn.setAttribute('aria-label', 'Copy to clipboard');
+    copyBtn.textContent = '📋';
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyToClipboardFallback(prepareTextForInsert(item, activeContext));
+    });
+
+    const fav = isFavorited(storageType, rawText);
     const starBtn = document.createElement('button');
     starBtn.type = 'button';
-    starBtn.className = `hyoumoji-fav-star-btn ${isFav ? 'is-fav' : ''}`;
-    starBtn.title = isFav ? 'Remove favorite' : 'Add to favorites';
-    starBtn.textContent = isFav ? '★' : '☆';
-    card.appendChild(starBtn);
-
-    const label = document.createElement('div');
-    label.className = 'hyoumoji-media-label';
-    label.textContent = safeTitle;
-    card.appendChild(label);
-
-    // Star button click (Toggles favorite without inserting)
+    starBtn.className = `hyoumoji-mini-btn ${fav ? 'is-fav' : ''}`;
+    starBtn.title = fav ? 'Remove favorite' : 'Add to favorites';
+    starBtn.setAttribute('aria-label', starBtn.title);
+    starBtn.setAttribute('aria-pressed', String(fav));
+    starBtn.textContent = fav ? '★' : '☆';
     starBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const added = toggleFavorite(type, mediaItem);
+      const added = toggleFavorite(storageType, item);
       starBtn.classList.toggle('is-fav', added);
+      starBtn.setAttribute('aria-pressed', String(added));
       starBtn.textContent = added ? '★' : '☆';
-      starBtn.title = added ? 'Remove favorite' : 'Add to favorites';
-      if (activeTab === 'favorites') {
-        renderTabContent();
-      }
+      if (activeTab === 'favorites') renderTabContent();
     });
 
-    // Body click (Attaches media immediately with 1 click)
-    card.addEventListener('click', () => {
-      attachMediaToComment(activeCommentBox, activeEditable, mediaItem, type);
-      addRecent(type, mediaItem);
+    const activateCard = () => {
+      insertTextIntoTarget(prepareTextForInsert(item, activeContext));
+      addRecent(storageType, item);
       closePicker();
+    };
+
+    actions.append(copyBtn, starBtn);
+    metaRow.append(badges, actions);
+    card.append(preview, metaRow);
+
+    card.addEventListener('click', activateCard);
+    card.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target !== card) return;
+      e.preventDefault();
+      activateCard();
     });
 
     return card;
   }
 
-  // --- Secure Background Fetch Helper (Manifest V3 CORS Proxy) ---
-  function fetchMediaViaBackground(endpoint) {
-    return new Promise((resolve, reject) => {
-      try {
-        if (isContextValid() && chrome.runtime?.sendMessage) {
-          chrome.runtime.sendMessage({ action: 'fetch_media', endpoint }, (response) => {
-            if (chrome.runtime?.lastError) {
-              return reject(new Error(chrome.runtime.lastError.message));
-            }
-            if (response && response.success) {
-              resolve(response.data);
-            } else {
-              reject(new Error(response?.error || 'Failed to fetch media'));
-            }
-          });
-          return;
-        }
-      } catch (err) {
-        return reject(err);
-      }
-
-      // Fallback for offline test environments
-      fetch(endpoint)
-        .then(res => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
-        })
-        .then(resolve)
-        .catch(reject);
-    });
+  function renderLoadingState(container, label) {
+    const box = document.createElement('div');
+    box.className = 'hyoumoji-status-box';
+    const spinner = document.createElement('div');
+    spinner.className = 'hyoumoji-spinner';
+    const text = document.createElement('span');
+    text.textContent = label;
+    box.append(spinner, text);
+    container.appendChild(box);
   }
 
-  // --- Live SafeSearch Media Fetcher with Pagination & Fast Loading ---
-  async function fetchLiveMedia(query, isSticker, gridElement, isAppend = false) {
-    if (isFetchingMedia) return;
-    isFetchingMedia = true;
-
+  // --- Tabs ---
+  async function renderTabContent() {
+    if (!pickerModal) return;
+    const renderId = ++activeRenderId;
     try {
-      const typeEndpoint = isSticker ? 'stickers' : 'gifs';
-      const cleanQuery = cleanSearchQuery(query);
-      const rating = 'pg-13'; // Unlocks full holiday and pop-culture library without restrictions
-      const limit = 50; // Rich 50-item grid
+      const container = pickerModal.querySelector('#hyoumoji-tab-content');
+      const chipsContainer = pickerModal.querySelector('#hyoumoji-chips-container');
+      const searchInput = pickerModal.querySelector('.hyoumoji-search-input');
+      if (!container) return;
 
-      let endpoint = '';
-      if (!cleanQuery || cleanQuery === 'trending') {
-        endpoint = `${GIPHY_BASE}/${typeEndpoint}/trending?api_key=${API_KEY}&limit=${limit}&offset=${currentOffset}&rating=${rating}`;
-      } else {
-        endpoint = `${GIPHY_BASE}/${typeEndpoint}/search?api_key=${API_KEY}&q=${encodeURIComponent(cleanQuery)}&limit=${limit}&offset=${currentOffset}&rating=${rating}`;
-      }
+      if (chipsContainer) chipsContainer.innerHTML = '';
+      container.innerHTML = '';
 
-      const data = await fetchMediaViaBackground(endpoint);
-
-      if (!isAppend) {
-        gridElement.innerHTML = '';
-        const banner = document.createElement('div');
-        banner.className = 'hyoumoji-results-count-banner';
-        banner.textContent = cleanQuery
-          ? `Top results for "${cleanQuery}" (500+ available)`
-          : `Trending ${isSticker ? 'Stickers' : 'GIFs'} (500+ available)`;
-        banner.style.gridColumn = '1 / -1';
-        gridElement.appendChild(banner);
-      } else {
-        const oldLoader = gridElement.querySelector('.hyoumoji-pagination-loader');
-        if (oldLoader) oldLoader.remove();
-      }
-
-      if (!data.data || data.data.length === 0) {
-        if (!isAppend) {
-          gridElement.innerHTML = `
-            <div class="hyoumoji-status-box" style="grid-column: 1 / -1;">
-              <span>No results found for "${query}"</span>
-            </div>
-          `;
-        }
-        hasMoreMedia = false;
-        isFetchingMedia = false;
-        return;
-      }
-
-      data.data.forEach(item => {
-        // Use downsized_medium / fixed_height for 20x faster thumbnail and comment rendering
-        const preview = item.images?.fixed_height_small?.url ||
-                        item.images?.fixed_height?.url ||
-                        item.images?.original?.url;
-        const fastMedia = item.images?.downsized_medium?.url ||
-                          item.images?.fixed_height?.url ||
-                          item.images?.original?.url || preview;
-        if (!preview) return;
-
-        const mediaObj = {
-          title: item.title || (isSticker ? 'Sticker' : 'GIF'),
-          url: fastMedia,
-          previewUrl: preview
+      if (searchInput) {
+        const placeholders = {
+          recent: 'Filter recents...',
+          favorites: 'Filter favorites...',
+          emojis: 'Search emojis (e.g. fire, skull, laugh, cat)...',
+          kaomoji: 'Search 36,000+ ASCII faces (e.g. happy, love, angry, bear)...',
+          ascii: 'Search ASCII & Braille art (e.g. pikachu, sword, cat, rose)...'
         };
-
-        gridElement.appendChild(createMediaCard(mediaObj, isSticker ? 'stickers' : 'gifs'));
-      });
-
-      currentOffset += data.data.length;
-      hasMoreMedia = (data.pagination?.total_count || 500) > currentOffset;
-
-      if (hasMoreMedia) {
-        const loader = document.createElement('div');
-        loader.className = 'hyoumoji-pagination-loader';
-        loader.style.gridColumn = '1 / -1';
-        loader.innerHTML = `
-          <button type="button" class="hyoumoji-load-more-btn">Load 50 More ${isSticker ? 'Stickers' : 'GIFs'}...</button>
-        `;
-        loader.querySelector('button').addEventListener('click', (e) => {
-          e.stopPropagation();
-          loader.innerHTML = '<div class="hyoumoji-spinner"></div>';
-          fetchLiveMedia(currentSearchQuery, isSticker, gridElement, true);
-        });
-        gridElement.appendChild(loader);
+        searchInput.placeholder = placeholders[activeTab] || 'Search...';
       }
+
+      if (activeTab === 'recent') renderRecentTab(container);
+      else if (activeTab === 'favorites') renderFavoritesTab(container);
+      else if (activeTab === 'emojis') await renderEmojisTab(container, chipsContainer, renderId);
+      else if (activeTab === 'kaomoji') await renderKaomojiTab(container, chipsContainer, renderId);
+      else if (activeTab === 'ascii') await renderAsciiTab(container, chipsContainer, renderId);
     } catch (err) {
-      console.warn('[hyoumoji] Live media notice:', err.message);
-      if (!isAppend) {
-        gridElement.innerHTML = `
-          <div class="hyoumoji-status-box" style="grid-column: 1 / -1;">
-            <span>Could not load media. Check network connection.</span>
-          </div>
-        `;
-      }
-    } finally {
-      isFetchingMedia = false;
+      console.warn('[hyoumoji] Tab render notice:', err);
     }
   }
 
-  // --- Attach Button to YouTube Comment Boxes ---
-  function injectHyoumojiButton(commentbox) {
-    if (!commentbox || commentbox.hasAttribute('data-hyoumoji-injected')) {
+  function appendExpressionSection(container, titleText, items, storageType, gridClass) {
+    if (!items.length) return;
+    const title = document.createElement('div');
+    title.className = 'hyoumoji-section-title';
+    title.textContent = titleText;
+    const grid = document.createElement('div');
+    grid.className = gridClass;
+    items.forEach(item => grid.appendChild(createExpressionCard(item, storageType)));
+    container.append(title, grid);
+  }
+
+  function renderRecentTab(container) {
+    const q = currentSearchQuery;
+    const emojis = (userStorage.recents.emojis || []).filter(e => !q || e.includes(q));
+    const kaomoji = (userStorage.recents.kaomoji || []).filter(k => fitsContext(k, activeContext) && (!q || (k.k || '').includes(q) || (k.t || '').includes(q)));
+    const ascii = (userStorage.recents.ascii || []).filter(a => fitsContext(a, activeContext) && (!q || (a.k || '').includes(q) || (a.t || '').includes(q)));
+
+    if (!emojis.length && !kaomoji.length && !ascii.length) {
+      renderEmptyState(container, '🕒', 'No recents yet', 'Emojis, ASCII faces, and ASCII art you pick appear here.');
       return;
     }
 
-    const editable = commentbox.querySelector('div#contenteditable-root') ||
-                     commentbox.querySelector('[contenteditable="true"]');
-    if (!editable) return;
+    if (emojis.length) {
+      const title = document.createElement('div');
+      title.className = 'hyoumoji-section-title';
+      title.textContent = 'Recent Emojis';
+      const grid = document.createElement('div');
+      grid.className = 'hyoumoji-emoji-grid';
+      emojis.forEach(e => grid.appendChild(createEmojiButton(e)));
+      container.append(title, grid);
+    }
 
-    const buttonsArea = commentbox.querySelector('#buttons') ||
-                        commentbox.querySelector('#footer') ||
-                        commentbox.querySelector('#action-buttons');
-    if (!buttonsArea) return;
+    appendExpressionSection(container, 'Recent ASCII Faces', kaomoji, 'kaomoji', 'hyoumoji-expr-grid');
+    appendExpressionSection(container, 'Recent ASCII Art', ascii, 'ascii', 'hyoumoji-ascii-list');
+  }
 
-    if (commentbox.querySelector('.hyoumoji-trigger-btn')) return;
+  function renderFavoritesTab(container) {
+    const q = currentSearchQuery;
+    const kaomoji = (userStorage.favorites.kaomoji || []).filter(k => !q || (k.k || '').includes(q) || (k.t || '').includes(q));
+    const ascii = (userStorage.favorites.ascii || []).filter(a => !q || (a.k || '').includes(q) || (a.t || '').includes(q));
 
-    commentbox.setAttribute('data-hyoumoji-injected', 'true');
+    if (!kaomoji.length && !ascii.length) {
+      renderEmptyState(container, '⭐', 'No favorites saved yet', 'Click ☆ on any ASCII face or ASCII art to save it here.');
+      return;
+    }
 
-    // Create Hyoumoji trigger button with User's custom sticker icon
+    appendExpressionSection(container, `Saved ASCII Faces (${kaomoji.length})`, kaomoji, 'kaomoji', 'hyoumoji-expr-grid');
+    appendExpressionSection(container, `Saved ASCII Art (${ascii.length})`, ascii, 'ascii', 'hyoumoji-ascii-list');
+  }
+
+  const EMOJI_FILTER_CHIPS = [
+    { id: 'all', label: 'All' },
+    { id: 'face smile laugh', label: '😂 Smileys' },
+    { id: 'heart love kiss', label: '❤️ Love' },
+    { id: 'fire star sparkle rocket 100', label: '🔥 Hype' },
+    { id: 'hand thumb clap pray', label: '👍 Hands' },
+    { id: 'animal cat dog bear', label: '🐱 Animals' },
+    { id: 'food drink pizza coffee', label: '🍕 Food' },
+    { id: 'game music party trophy', label: '🎮 Gaming' }
+  ];
+
+  async function renderEmojisTab(container, chipsContainer, renderId) {
+    renderChips(chipsContainer, EMOJI_FILTER_CHIPS);
+    if (!datasetCache.emojis) renderLoadingState(container, 'Loading emojis...');
+    const allEmojis = await loadDataset('emojis');
+    if (renderId !== activeRenderId) return;
+    container.innerHTML = '';
+    const q = currentSearchQuery;
+
+    let filtered = allEmojis;
+    if (activeSubFilter !== 'all') {
+      const terms = activeSubFilter.split(' ');
+      filtered = filtered.filter(item => terms.some(t => item.k.includes(t)));
+    }
+    if (q) {
+      const qTerms = q.split(/\s+/).filter(Boolean);
+      filtered = filtered.filter(item => item.e === q || qTerms.every(t => item.k.includes(t)));
+    }
+
+    const banner = document.createElement('div');
+    banner.className = 'hyoumoji-results-count-banner';
+    banner.textContent = `${filtered.length} emojis${q ? ` matching "${q}"` : ''}`;
+    container.appendChild(banner);
+
+    if (!filtered.length) {
+      renderEmptyState(container, '🔍', 'No emojis found', `No match for "${q}". Try "fire", "laugh", "heart", or "cat".`);
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'hyoumoji-emoji-grid';
+    const slice = filtered.slice(0, renderLimit);
+    slice.forEach(item => grid.appendChild(createEmojiButton(item)));
+    container.appendChild(grid);
+    renderLoadMore(container, filtered.length - slice.length, PAGE_STEP.emojis);
+  }
+
+  const KAOMOJI_CHIPS = [
+    { id: 'all', label: 'All' },
+    { id: 'happy', label: '😊 Happy' },
+    { id: 'love', label: '❤️ Love' },
+    { id: 'angry', label: '💢 Angry' },
+    { id: 'sad', label: '😢 Sad' },
+    { id: 'cute', label: '🌸 Cute' },
+    { id: 'shrug', label: '🤷 Shrug' },
+    { id: 'bear', label: 'ʕ•ᴥ•ʔ Bear' },
+    { id: 'cat', label: '🐱 Cat' },
+    { id: 'table', label: '┻━┻ Flip' }
+  ];
+
+  async function renderKaomojiTab(container, chipsContainer, renderId) {
+    renderChips(chipsContainer, KAOMOJI_CHIPS);
+    if (!datasetCache.kaomoji) renderLoadingState(container, 'Loading 36,000+ ASCII faces...');
+    const allKaomoji = await loadDataset('kaomoji');
+    if (renderId !== activeRenderId) return;
+    container.innerHTML = '';
+    const q = currentSearchQuery;
+
+    let filtered = allKaomoji.filter(item => fitsContext(item, activeContext));
+    if (activeSubFilter !== 'all') {
+      filtered = filtered.filter(item => item.k.includes(activeSubFilter) || item.t.includes(activeSubFilter));
+    }
+    if (q) {
+      const qTerms = q.split(/\s+/).filter(Boolean);
+      filtered = filtered.filter(item => qTerms.every(t => item.k.includes(t) || item.t.toLowerCase().includes(t)));
+    }
+
+    const banner = document.createElement('div');
+    banner.className = 'hyoumoji-results-count-banner';
+    banner.textContent = `${filtered.length.toLocaleString()} ASCII faces fit ${activeContext.label}`;
+    container.appendChild(banner);
+
+    if (!filtered.length) {
+      renderEmptyState(container, '🔍', 'No ASCII faces found', `No match for "${q}" in ${activeContext.label}.`);
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'hyoumoji-expr-grid';
+    const slice = filtered.slice(0, renderLimit);
+    slice.forEach(item => grid.appendChild(createExpressionCard(item, 'kaomoji')));
+    container.appendChild(grid);
+    renderLoadMore(container, filtered.length - slice.length, PAGE_STEP.kaomoji);
+  }
+
+  const ASCII_CHIPS = [
+    { id: 'all', label: 'All' },
+    { id: 'one-line', label: '⚡ 1-Line' },
+    { id: 'braille', label: '⣿ Braille' },
+    { id: 'anime', label: '🎌 Anime' },
+    { id: 'combos', label: '✨ Combos' },
+    { id: 'animals', label: '🐾 Animals' },
+    { id: 'love', label: '❤️ Love' },
+    { id: 'objects', label: '⚔️ Objects' },
+    { id: 'classic', label: '🖼️ Classic' }
+  ];
+
+  function matchesAsciiSubFilter(item, subFilter) {
+    if (subFilter === 'all') return true;
+    if (subFilter === 'one-line') return item.m === 0 || item.cat === 'one-line';
+    if (subFilter === 'braille') return item.b === 1 || item.cat === 'braille';
+    return item.cat === subFilter || item.k.includes(subFilter);
+  }
+
+  async function renderAsciiTab(container, chipsContainer, renderId) {
+    renderChips(chipsContainer, ASCII_CHIPS);
+    if (!datasetCache.ascii) renderLoadingState(container, 'Loading ASCII & Braille art...');
+    const allAscii = await loadDataset('ascii');
+    if (renderId !== activeRenderId) return;
+    container.innerHTML = '';
+    const q = currentSearchQuery;
+
+    let filtered = allAscii.filter(item => fitsContext(item, activeContext) && matchesAsciiSubFilter(item, activeSubFilter));
+    if (q) {
+      const qTerms = q.split(/\s+/).filter(Boolean);
+      filtered = filtered.filter(item => qTerms.every(t => item.k.includes(t) || item.t.toLowerCase().includes(t)));
+    }
+
+    if (!activeContext.allowMultiline || activeContext.id === 'yt_short') {
+      filtered.sort((a, b) => (a.m - b.m) || (a.w - b.w));
+    }
+
+    const banner = document.createElement('div');
+    banner.className = 'hyoumoji-results-count-banner';
+    banner.textContent = `${filtered.length.toLocaleString()} ASCII & Braille items fit ${activeContext.label}`;
+    container.appendChild(banner);
+
+    if (!filtered.length) {
+      const msg = (fitToSpace && !activeContext.allowMultiline)
+        ? 'Multi-line art is hidden in this single-line live chat. Try "1-Line" or click "Show All" to copy.'
+        : `No ASCII art found for "${q}".`;
+      renderEmptyState(container, '🎨', 'Nothing fits this filter', msg);
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'hyoumoji-ascii-list';
+    const slice = filtered.slice(0, renderLimit);
+    slice.forEach(item => list.appendChild(createExpressionCard(item, 'ascii')));
+    container.appendChild(list);
+    renderLoadMore(container, filtered.length - slice.length, PAGE_STEP.ascii);
+  }
+
+  // --- Platform Input Injection ---
+  function createTriggerButton(editable) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'hyoumoji-trigger-btn';
-    btn.title = 'Add Emojis, GIFs & Stickers (hyoumoji)';
+    btn.title = 'Open hyoumoji (Emojis, ASCII Faces & ASCII Art)';
+    btn.setAttribute('aria-label', 'Open hyoumoji picker');
 
     const iconUrl = getSafeExtensionUrl('icons/icon48.png');
-    btn.innerHTML = `
-      ${iconUrl ? `<img src="${iconUrl}" class="hyoumoji-btn-sticker-icon" alt="hyoumoji" />` : ''}
-      <span>hyoumoji</span>
-    `;
+    if (iconUrl) {
+      const img = document.createElement('img');
+      img.src = iconUrl;
+      img.className = 'hyoumoji-btn-sticker-icon';
+      img.alt = '';
+      btn.appendChild(img);
+    }
+
+    const label = document.createElement('span');
+    label.textContent = 'hyoumoji';
+    btn.appendChild(label);
 
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openPicker(btn, commentbox, editable);
+      openPicker(btn, editable);
     });
+    return btn;
+  }
 
-    const nativeEmojiBtn = buttonsArea.querySelector('#emoji-button');
-    if (nativeEmojiBtn && nativeEmojiBtn.parentNode) {
-      nativeEmojiBtn.parentNode.insertBefore(btn, nativeEmojiBtn);
-    } else {
-      buttonsArea.prepend(btn);
+  function injectYouTubeComments() {
+    document.querySelectorAll('ytd-commentbox, ytd-comment-simplebox-renderer').forEach(box => {
+      if (box.hasAttribute('data-hyoumoji-injected')) return;
+      const editable = box.querySelector('div#contenteditable-root') || box.querySelector('[contenteditable="true"]');
+      const buttonsArea = box.querySelector('#buttons, #footer, #action-buttons');
+      if (!editable || !buttonsArea || box.querySelector('.hyoumoji-trigger-btn')) return;
+
+      box.setAttribute('data-hyoumoji-injected', 'true');
+      const btn = createTriggerButton(editable);
+      const nativeEmojiBtn = buttonsArea.querySelector('#emoji-button');
+      if (nativeEmojiBtn?.parentNode) nativeEmojiBtn.parentNode.insertBefore(btn, nativeEmojiBtn);
+      else buttonsArea.prepend(btn);
+    });
+  }
+
+  function injectYouTubeLiveChat() {
+    const liveInput = document.querySelector('yt-live-chat-text-input-field-renderer #input');
+    const actionButtons = document.querySelector('yt-live-chat-message-input-renderer #interaction-message, yt-live-chat-message-input-renderer #buttons');
+    if (!liveInput || !actionButtons || actionButtons.querySelector('.hyoumoji-trigger-btn')) return;
+
+    const btn = createTriggerButton(liveInput);
+    btn.classList.add('is-compact');
+    actionButtons.prepend(btn);
+  }
+
+  function injectStreamChat() {
+    const host = (window.location.hostname || '').toLowerCase();
+    let editable = null;
+    let targetBar = null;
+
+    if (host.includes('twitch.tv')) {
+      editable = document.querySelector('[data-a-target="chat-input"]');
+      targetBar = document.querySelector('[data-test-selector="chat-input-buttons-container"]') ||
+                  editable?.closest('.chat-input')?.querySelector('.tw-flex');
+    } else if (host.includes('kick.com')) {
+      editable = document.querySelector('#message-input, [data-testid="chat-input"], [contenteditable="true"]');
+      targetBar = editable?.parentElement?.parentElement;
+    } else if (host.includes('rumble.com')) {
+      editable = document.querySelector('#chat-message-text-input, textarea[name="message"]');
+      targetBar = editable?.parentElement;
+    } else if (host.includes('tiktok.com')) {
+      editable = document.querySelector('[data-e2e="comment-input"] [contenteditable="true"], [contenteditable="true"]');
+      targetBar = editable?.parentElement;
     }
+
+    if (!editable || !targetBar || targetBar.querySelector('.hyoumoji-trigger-btn')) return;
+    const btn = createTriggerButton(editable);
+    btn.classList.add('is-compact');
+    targetBar.prepend(btn);
   }
 
-  // --- Live Inline Rendering of Comments + "⭐ Save to Favorites" ---
-  function renderInlineMediaInComments() {
-    const commentNodes = document.querySelectorAll('ytd-comment-view-model #content-text, ytd-expander #content-text, yt-formatted-string#content-text');
-
-    commentNodes.forEach(node => {
-      if (node.hasAttribute('data-hyoumoji-rendered')) return;
-
-      const text = node.innerText || node.textContent || '';
-      // Support Giphy, Tenor, or direct .gif/.webp URLs
-      const urlRegex = /(https?:\/\/(?:media\d*\.giphy\.com\/[^\s"'>]+|i\.giphy\.com\/[^\s"'>]+|media\.tenor\.com\/[^\s"'>]+|tenor\.com\/view\/[^\s"'>]+|[^\s"'>]+\.(?:gif|webp))(?:\?[^\s"'>]*)?)/i;
-      const match = text.match(urlRegex);
-
-      if (match) {
-        node.setAttribute('data-hyoumoji-rendered', 'true');
-        const rawUrl = match[1];
-        const mediaUrl = sanitizeMediaUrl(rawUrl);
-        if (!mediaUrl) return;
-
-        // 1. Hide all links pointing to media or showing media URL
-        const linkTags = node.querySelectorAll('a');
-        linkTags.forEach(a => {
-          const href = safeDecode(a.href).toLowerCase();
-          const aText = (a.textContent || '').toLowerCase();
-          if (
-            href.includes('giphy.com') ||
-            href.includes('tenor.com') ||
-            aText.includes('giphy.com') ||
-            aText.includes('tenor.com') ||
-            href.endsWith('.gif') ||
-            href.endsWith('.webp')
-          ) {
-            a.style.display = 'none';
-            if (a.parentElement && a.parentElement !== node && a.parentElement.children.length === 1) {
-              a.parentElement.style.display = 'none';
-            }
-          }
-        });
-
-        // 2. Remove raw URL text from all text nodes using TreeWalker
-        try {
-          const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null, false);
-          let currentTextNode;
-          while ((currentTextNode = walker.nextNode())) {
-            if (urlRegex.test(currentTextNode.nodeValue)) {
-              currentTextNode.nodeValue = currentTextNode.nodeValue.replace(urlRegex, '').trim();
-            }
-          }
-        } catch {}
-
-        // 3. If comment has no other text, hide the empty text container completely
-        const remainingText = (node.innerText || node.textContent || '').trim();
-        if (!remainingText) {
-          node.style.display = 'none';
-        }
-
-        const isSticker = mediaUrl.includes('sticker') || mediaUrl.includes('nanogif');
-        const type = isSticker ? 'stickers' : 'gifs';
-        const alreadyFav = isFavorited(type, mediaUrl);
-
-        const badge = document.createElement('div');
-        badge.className = 'hyoumoji-comment-badge';
-
-        const tagPill = document.createElement('span');
-        tagPill.className = 'hyoumoji-tag-pill';
-        tagPill.textContent = isSticker ? 'Sticker' : 'GIF';
-        badge.appendChild(tagPill);
-
-        const saveBtn = document.createElement('button');
-        saveBtn.className = `hyoumoji-save-btn ${alreadyFav ? 'is-saved' : ''}`;
-        saveBtn.title = alreadyFav ? 'Saved to favorites' : 'Save to my favorites';
-        saveBtn.textContent = alreadyFav ? '★ Saved' : '⭐ Save';
-        badge.appendChild(saveBtn);
-
-        let fastRenderUrl = mediaUrl;
-        if (fastRenderUrl.includes('giphy.com') && fastRenderUrl.endsWith('/giphy.gif')) {
-          fastRenderUrl = fastRenderUrl.replace(/\/giphy\.gif$/, '/200.gif');
-        }
-
-        const img = document.createElement('img');
-        img.src = fastRenderUrl;
-        img.loading = 'lazy';
-        img.decoding = 'async';
-        img.alt = 'hyoumoji reaction';
-        img.title = 'Click to open original';
-        badge.appendChild(img);
-
-        saveBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const mediaItem = {
-            title: isSticker ? 'Saved Sticker' : 'Saved GIF',
-            url: mediaUrl,
-            previewUrl: mediaUrl
-          };
-          const added = toggleFavorite(type, mediaItem);
-          saveBtn.classList.toggle('is-saved', added);
-          saveBtn.textContent = added ? '★ Saved' : '⭐ Save';
-          saveBtn.title = added ? 'Saved to favorites' : 'Save to my favorites';
-        });
-
-        badge.addEventListener('click', () => {
-          window.open(mediaUrl, '_blank', 'noopener,noreferrer');
-        });
-
-        if (node.parentNode) {
-          node.parentNode.insertBefore(badge, node.nextSibling);
-        }
-      }
-    });
-  }
-
-  // --- Scan and Observe DOM for Comments (Debounced for 60fps Performance) ---
-  function scanForCommentBoxes() {
-    const boxes = document.querySelectorAll('ytd-commentbox, ytd-comment-simplebox-renderer');
-    boxes.forEach(box => injectHyoumojiButton(box));
-
-    renderInlineMediaInComments();
+  function scanForInputs() {
+    if ((window.location.hostname || '').toLowerCase().includes('youtube.com')) {
+      injectYouTubeComments();
+      injectYouTubeLiveChat();
+      return;
+    }
+    injectStreamChat();
   }
 
   let scanDebounceTimer = null;
@@ -1057,31 +1015,17 @@
     if (scanDebounceTimer) return;
     scanDebounceTimer = setTimeout(() => {
       scanDebounceTimer = null;
-      scanForCommentBoxes();
-    }, 150);
+      scanForInputs();
+    }, 180);
   }
 
-  const observer = new MutationObserver(() => {
-    scheduleScan();
-  });
+  const observer = new MutationObserver(scheduleScan);
+  if (document.body) observer.observe(document.body, { childList: true, subtree: true });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
+  window.addEventListener('yt-navigate-finish', () => setTimeout(scheduleScan, 600));
 
-  window.addEventListener('yt-navigate-finish', () => {
-    setTimeout(scheduleScan, 800);
-  });
-
-  // Initial load
   loadUserStorage(() => {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', scanForCommentBoxes);
-    } else {
-      scanForCommentBoxes();
-    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scanForInputs);
+    else scanForInputs();
   });
-
-  console.log('[hyoumoji] Extension initialized.');
 })();
