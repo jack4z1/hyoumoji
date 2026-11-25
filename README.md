@@ -55,9 +55,12 @@ GIF and image links often get hidden, turned into raw URLs on mobile apps, or bl
 Built with data and inspiration from these awesome open-source projects and community archives:
 
 - [muan/emojilib](https://github.com/muan/emojilib) — Emoji keyword search index
+- [muan/unicode-emoji-json](https://github.com/muan/unicode-emoji-json) — Standard emoji category grouping
 - [kaomojiya-collection/kaomoji-collection](https://github.com/kaomojiya-collection/kaomoji-collection) — Categorized ASCII faces library
 - [asweigart/asciiartjsondb](https://github.com/asweigart/asciiartjsondb) — JSON compilation of classic ASCII art
 - [ASCII Art Archive (asciiart.eu)](https://www.asciiart.eu/) — Classic & one-line ASCII art collection
+- [xshlc/ascii_art_fetch](https://github.com/xshlc/ascii_art_fetch) — Anime Braille art collection
+- [shehap0/anime-ASCII-art](https://github.com/shehap0/anime-ASCII-art) — Anime character Braille & ASCII art
 - [Emoji Combos](https://emojicombos.com/) — Dot-art and aesthetic text combo inspiration
 
 ---

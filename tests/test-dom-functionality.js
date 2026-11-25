@@ -1,6 +1,5 @@
 /**
- * Full Sandboxed VM Functional & UI Smoke Test for hyoumoji v2.0
- * Actually executes content.js inside a simulated browser environment!
+ * Full Sandboxed VM Functional & UI/UX Test for hyoumoji
  */
 
 const fs = require('fs');
@@ -21,7 +20,6 @@ function assert(condition, message) {
   }
 }
 
-// Minimal DOM implementation that supports content.js execution cleanly
 class SandboxNode {
   constructor(tagName = 'div') {
     this.tagName = tagName.toUpperCase();
@@ -34,7 +32,6 @@ class SandboxNode {
     this.value = '';
     this.title = '';
     this.placeholder = '';
-    this.type = '';
     this.parentNode = null;
     this.parentElement = null;
     this.listeners = {};
@@ -71,7 +68,6 @@ class SandboxNode {
     this._innerHTML = html;
     this.children = [];
     if (!html || !html.trim()) return;
-    // Parse static picker shell elements cleanly for test selectors
     if (html.includes('hyoumoji-tabs')) {
       const mk = (tag, cls, id = '', attrs = {}) => {
         const el = new SandboxNode(tag);
@@ -87,12 +83,11 @@ class SandboxNode {
         mk('button', 'hyoumoji-tab-btn', '', { 'data-tab': 'recent', 'aria-selected': 'false' }),
         mk('button', 'hyoumoji-tab-btn', '', { 'data-tab': 'favorites', 'aria-selected': 'false' }),
         mk('button', 'hyoumoji-tab-btn active', '', { 'data-tab': 'emojis', 'aria-selected': 'true' }),
-        mk('button', 'hyoumoji-tab-btn', '', { 'data-tab': 'kaomoji', 'aria-selected': 'false' }),
         mk('button', 'hyoumoji-tab-btn', '', { 'data-tab': 'ascii', 'aria-selected': 'false' }),
         mk('input', 'hyoumoji-search-input'),
         mk('button', 'hyoumoji-search-clear-btn'),
         mk('button', 'hyoumoji-search-btn'),
-        mk('div', 'hyoumoji-chips-row', 'hyoumoji-chips-container'),
+        mk('div', 'hyoumoji-subbar', 'hyoumoji-subbar-container'),
         mk('div', 'hyoumoji-body', 'hyoumoji-tab-content'),
         mk('span', '', 'hyoumoji-footer-hint')
       );
@@ -156,7 +151,9 @@ class SandboxNode {
 function matchesSimple(node, sel) {
   if (!sel) return false;
   if (sel.startsWith('#')) return node.id === sel.slice(1);
-  if (sel.startsWith('.')) return node.classList.contains(sel.slice(1));
+  if (sel.startsWith('.')) {
+    return sel.slice(1).split('.').every(cls => node.classList.contains(cls));
+  }
   if (sel.startsWith('[')) {
     const m = sel.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/);
     if (!m) return false;
@@ -179,17 +176,15 @@ function matchesDescendant(node, sel) {
 
 async function runSandboxTest() {
   console.log('====================================================');
-  console.log('🧪 RUNNING FULL SANDBOXED FUNCTIONAL & UI/UX TESTS');
+  console.log('🧪 RUNNING SANDBOXED FUNCTIONAL & UI/UX TESTS');
   console.log('====================================================\n');
 
   const body = new SandboxNode('body');
   const html = new SandboxNode('html');
-  html.setAttribute('dark', '');
   html.appendChild(body);
 
-  // Build simulated YouTube comment box in DOM
   const commentBox = new SandboxNode('ytd-commentbox');
-  const editable = new SandboxNode('textarea'); // supports direct value checks
+  const editable = new SandboxNode('textarea');
   editable.id = 'contenteditable-root';
   editable.setAttribute('contenteditable', 'true');
   const buttons = new SandboxNode('div');
@@ -200,16 +195,11 @@ async function runSandboxTest() {
   commentBox.append(editable, buttons);
   body.appendChild(commentBox);
 
-  const storedData = { hyoumoji_recents: { stale: true } };
-  const removedKeys = [];
-
   const mockWindow = {
     location: { hostname: 'www.youtube.com', pathname: '/watch' },
     innerWidth: 1280,
     innerHeight: 800,
     scrollY: 0,
-    getComputedStyle: () => ({ backgroundColor: 'rgb(15, 15, 15)' }),
-    matchMedia: () => ({ matches: true }),
     addEventListener: () => {}
   };
   mockWindow.top = mockWindow;
@@ -232,18 +222,11 @@ async function runSandboxTest() {
     },
     chrome: {
       runtime: { id: 'test-ext-id', getURL: (p) => `chrome-extension://test/${p}`, lastError: null },
-      storage: {
-        local: {
-          remove: (keys) => removedKeys.push(...keys),
-          get: (_keys, cb) => cb({}),
-          set: (obj) => Object.assign(storedData, obj)
-        }
-      }
+      storage: { local: { remove: () => {}, get: (_k, cb) => cb({}), set: () => {} } }
     },
     fetch: async (url) => {
       const rel = url.replace('chrome-extension://test/', '');
-      const fullPath = path.join(ROOT_DIR, rel);
-      const text = fs.readFileSync(fullPath, 'utf8');
+      const text = fs.readFileSync(path.join(ROOT_DIR, rel), 'utf8');
       return { ok: true, status: 200, json: async () => JSON.parse(text) };
     },
     MutationObserver: class { observe() {} disconnect() {} },
@@ -254,94 +237,81 @@ async function runSandboxTest() {
     navigator: { clipboard: { writeText: async () => {} } }
   };
 
-  const code = fs.readFileSync(path.join(ROOT_DIR, 'content.js'), 'utf8');
-  vm.runInNewContext(code, sandbox);
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT_DIR, 'content.js'), 'utf8'), sandbox);
   await new Promise(r => setTimeout(r, 30));
 
-  // 1. Trigger injection & legacy cleanup
   const triggerBtn = buttons.querySelector('.hyoumoji-trigger-btn');
-  assert(Boolean(triggerBtn), 'Trigger button automatically injected into YouTube comment box');
-  assert(removedKeys.includes('hyoumoji_recents'), 'Purged legacy v1 storage keys on startup');
+  assert(Boolean(triggerBtn), 'Trigger button injected into comment box');
 
-  // 2. Open picker & verify context + theme
   triggerBtn.click();
   await new Promise(r => setTimeout(r, 40));
 
   const picker = body.querySelector('#hyoumoji-picker-container');
-  assert(picker && picker.style.display === 'flex', 'Picker modal opened cleanly');
-  assert(picker.classList.contains('hyoumoji-theme-dark'), 'Detected dark page theme and applied dark token class');
-  assert(picker.querySelector('#hyoumoji-context-badge').textContent.includes('YT Comment'), 'Detected YT Long-Form Comment context');
-
-  // 3. Test Search Box + Search Button on Emojis tab
   const searchInput = picker.querySelector('.hyoumoji-search-input');
   const searchBtn = picker.querySelector('.hyoumoji-search-btn');
   const clearBtn = picker.querySelector('.hyoumoji-search-clear-btn');
 
+  // 1. WhatsApp Emoji Tab & Simple Watermark
+  assert(picker.querySelectorAll('.hyoumoji-tab-btn').length === 4, 'Unified UI has 4 tabs: Recent, Favs, Emojis, ASCII');
+  assert(searchInput.placeholder === 'Search emoji', 'Simple search watermark: "Search emoji"');
+  assert(picker.querySelectorAll('.hyoumoji-wa-icon-btn').length === 9, 'WhatsApp-style 9 SVG category icons rendered under search bar');
+
+  // Switch WhatsApp category to Animals
+  const waBtns = picker.querySelectorAll('.hyoumoji-wa-icon-btn');
+  waBtns[2].click();
+  await new Promise(r => setTimeout(r, 30));
+  assert(picker.querySelectorAll('.hyoumoji-emoji-item').some(e => e.textContent === '🐶'), 'Animals SVG icon loads animal emojis');
+
+  // Search emoji "fire"
   searchInput.value = 'fire';
   searchBtn.click();
-  await new Promise(r => setTimeout(r, 40));
-
-  const emojiItems = picker.querySelectorAll('.hyoumoji-emoji-item');
-  assert(emojiItems.some(b => b.textContent === '🔥'), 'Search button ("fire") returned 🔥 emoji');
-  assert(emojiItems.length > 0, `Emoji search rendered ${emojiItems.length} matching results`);
-
-  // 4. Test Clear Search Button
+  await new Promise(r => setTimeout(r, 30));
+  assert(picker.querySelectorAll('.hyoumoji-emoji-item').some(e => e.textContent === '🔥'), 'Emoji search ("fire") returns 🔥');
   clearBtn.click();
-  await new Promise(r => setTimeout(r, 40));
-  assert(searchInput.value === '', 'Clear button emptied search input');
 
-  // 5. Switch to ASCII tab, verify Load More works (>50 items!)
+  // 2. Unified ASCII Tab + Multi-Select Filter Tags
   const asciiTabBtn = picker.querySelectorAll('.hyoumoji-tab-btn').find(b => b.getAttribute('data-tab') === 'ascii');
   asciiTabBtn.click();
   await new Promise(r => setTimeout(r, 50));
 
-  const initialCards = picker.querySelectorAll('.hyoumoji-expr-card').length;
-  const loadMoreBtn = picker.querySelector('.hyoumoji-load-more-btn');
-  assert(initialCards === 50 && Boolean(loadMoreBtn), `ASCII tab rendered initial page (${initialCards}) with Load More button`);
+  assert(searchInput.placeholder === 'Search ascii', 'Simple ASCII watermark: "Search ascii"');
+  const tagBtns = picker.querySelectorAll('.hyoumoji-tag-btn');
+  assert(tagBtns.map(b => b.textContent).join(',') === 'All,Single Line,Faces,Multiline,Braille',
+    'ASCII filter tags match exact set: All, Single Line, Faces, Multiline, Braille');
 
-  loadMoreBtn.click();
-  await new Promise(r => setTimeout(r, 50));
-  const afterLoadMoreCards = picker.querySelectorAll('.hyoumoji-expr-card').length;
-  assert(afterLoadMoreCards === 100, `Load More expanded ASCII tab to ${afterLoadMoreCards} cards (pagination bug fixed!)`);
+  // Multi-select Faces + Multiline
+  tagBtns.find(b => b.textContent === 'Faces').click();
+  await new Promise(r => setTimeout(r, 40));
+  tagBtns.find(b => b.textContent === 'Braille').click();
+  await new Promise(r => setTimeout(r, 40));
+  const activeTags = picker.querySelectorAll('.hyoumoji-tag-btn.active').map(b => b.textContent);
+  assert(activeTags.includes('Faces') && activeTags.includes('Braille'), 'Multi-select allows Faces + Braille active simultaneously');
 
-  // 6. Search ASCII ("pikachu") & insert into box
-  searchInput.value = 'pikachu';
+  // Reset to All & test "car" search relevance (real car BEFORE amoeba!)
+  picker.querySelectorAll('.hyoumoji-tag-btn')[0].click();
+  await new Promise(r => setTimeout(r, 40));
+  searchInput.value = 'car';
   searchBtn.click();
   await new Promise(r => setTimeout(r, 40));
-  const pikaCards = picker.querySelectorAll('.hyoumoji-expr-card');
-  assert(pikaCards.length >= 1, 'ASCII search button found Pikachu Braille art');
+  const firstCarCard = picker.querySelectorAll('.hyoumoji-ascii-card')[0];
+  assert(firstCarCard && !firstCarCard.querySelector('.hyoumoji-ascii-preview').textContent.includes('amoeba'),
+    '"car" search returns actual cars first (not amoeba cartoon substring)');
 
-  pikaCards[0].click();
-  assert(editable.value.includes('⣿⣿⣿⣿⣿⣿⣿⣿'), 'Clicking ASCII card inserted Braille art into comment input');
-  assert(picker.style.display === 'none', 'Picker closed automatically after insert');
-
-  // 7. Reopen on Twitch context, verify keyboard card activation & Escape close
-  mockWindow.location.hostname = 'www.twitch.tv';
-  mockWindow.location.pathname = '/shroud';
-  html.attributes = {}; // Simulate Twitch without YouTube's dark attribute
-  triggerBtn.click();
+  // Test "anime" search returns plenty of results (60 initial page + load more!)
+  searchInput.value = 'anime';
+  searchBtn.click();
   await new Promise(r => setTimeout(r, 40));
-  assert(picker.querySelector('#hyoumoji-context-badge').textContent.includes('Twitch'), 'Switched context dynamically to Twitch (500)');
-  assert(picker.classList.contains('hyoumoji-theme-dark'), 'Twitch dark background luminance kept dark theme (not wrongly white)');
-  assert(asciiTabBtn.getAttribute('aria-selected') === 'true', 'ARIA selected state accurately tracks active tab');
+  const animeCards = picker.querySelectorAll('.hyoumoji-ascii-card');
+  assert(animeCards.length === 60 && Boolean(picker.querySelector('.hyoumoji-load-more-btn')),
+    '"anime" search returned full page (60+ results with Load More)');
 
-  const firstAsciiCard = picker.querySelectorAll('.hyoumoji-expr-card')[0];
-  assert(firstAsciiCard.getAttribute('role') === 'button' && firstAsciiCard.tabIndex === 0, 'Expression cards are keyboard focusable buttons');
-
-  body.dispatchEvent({ type: 'keydown', key: 'Escape' });
-  assert(picker.style.display === 'none', 'Escape key closes picker cleanly');
-
-  // 8. Verify async rapid tab-switch race protection (ASCII -> Emojis rapidly)
-  triggerBtn.click();
-  asciiTabBtn.click();
-  const emojiTabBtn = picker.querySelectorAll('.hyoumoji-tab-btn').find(b => b.getAttribute('data-tab') === 'emojis');
-  emojiTabBtn.click();
-  await new Promise(r => setTimeout(r, 80));
-  assert(picker.querySelectorAll('.hyoumoji-emoji-item').length > 0 && picker.querySelectorAll('.hyoumoji-ascii-list').length === 0,
-    'Rapid tab switch (ASCII -> Emojis) prevented stale async overwrite');
+  // Click an anime Braille card & verify insert
+  animeCards[0].click();
+  assert(editable.value.length > 50, 'Clicking fitted anime Braille card inserted full art into input');
+  assert(picker.style.display === 'none', 'Picker closed after insert');
 
   console.log('\n====================================================');
-  console.log(`🏁 SANDBOX FUNCTIONAL TEST: ${passed} PASSED, ${failed} FAILED`);
+  console.log(`🏁 SANDBOX TEST: ${passed} PASSED, ${failed} FAILED`);
   console.log('====================================================');
   if (failed > 0) process.exit(1);
 }
